@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 import numpy as np
-from database.cloudPairs import FragmentPairs
+from database.pairs import Pairs
 
 class ModelI(ABC):
     
     @abstractmethod
-    def __call__(self, pair: FragmentPairs) -> np.ndarray:
+    def __call__(self, pair: Pairs) -> np.ndarray:
         ...

@@ -14,7 +14,7 @@ from submodules.OverlapPredator.datasets.dataloader import collate_fn_descriptor
 from submodules.OverlapPredator.lib.benchmark_utils import ransac_pose_estimation
 
 from customModels.modelI import ModelI
-from database.cloudPairs import FragmentPairs
+from database.pairs import Pairs
 
 @dataclass
 class Config:
@@ -49,7 +49,7 @@ class Predator(ModelI):
     def __repr__(self) -> str:
         return self.model.__repr__()
  
-    def __call__(self, pair: FragmentPairs) -> np.ndarray:
+    def __call__(self, pair: Pairs) -> np.ndarray:
         self.model.eval()
         with torch.no_grad():
             wrapper = (

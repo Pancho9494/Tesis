@@ -1,11 +1,11 @@
 from dataclasses import dataclass, field
-from pathlib import Path
-import open3d as o3d
 import numpy as np
+import open3d as o3d
+from pathlib  import Path
 from typing import Optional
 import torch
 import copy
-from submodules.OverlapPredator.scripts.cal_overlap import get_overlap_ratio
+
 
 @dataclass
 class Cloud:
@@ -93,18 +93,7 @@ class Cloud:
         cloud_copy.features = cloud_copy._feat[indices]
         cloud_copy.pcd.points = o3d.utility.Vector3dVector(cloud_copy.arr)
         return cloud_copy
-
-@dataclass
-class FragmentPairs:
-    """
-    Utility class that holds fragment pairs, with the transform that aligns them and their overlap
-    """
-    src: Cloud
-    target: Cloud
-    transform: np.ndarray = field(compare=False, repr=False)
-    overlap_ratio: float = field(default=0.0, compare=False, repr=False)
     
-    def compute_overlap(self) -> None:
-        temp = self.target.pcd
-        temp.transform(self.transform)
-        self.overlap_ratio = get_overlap_ratio(self.src.pcd, temp)
+    def paint(self, rgb: np.ndarray) -> None:
+        self.pcd.paint_uniform_color(rgb)
+        self.pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.3, max_nn=50))

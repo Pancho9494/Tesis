@@ -4,7 +4,7 @@ from submodules.OverlapPredator.lib.benchmark import read_trajectory
 import numpy as np
 import concurrent.futures
 from typing import List
-from database.cloudPairs import Cloud, FragmentPairs
+from database.pairs import Cloud, Pairs
 import random
 
 class ThreeDLoMatch(Dataset):
@@ -13,7 +13,7 @@ class ThreeDLoMatch(Dataset):
     
     """
     dir: Path
-    pairs: List[FragmentPairs]
+    pairs: List[Pairs]
     max_points: int = 30_000
     overlap_radius: float = 0.0375
     
@@ -24,7 +24,7 @@ class ThreeDLoMatch(Dataset):
     def __len__(self) -> int:
         return len(self.pairs)
         
-    def __getitem__(self, idx: int) -> FragmentPairs: 
+    def __getitem__(self, idx: int) -> Pairs: 
         pair = self.pairs[idx]
         print(f"Processing pair {self.pairs[idx].src} {self.pairs[idx].target}")
         
@@ -35,7 +35,7 @@ class ThreeDLoMatch(Dataset):
     
         return pair
         
-    def _join_scene_ground_truths(self, shuffle: bool) -> List[FragmentPairs]:
+    def _join_scene_ground_truths(self, shuffle: bool) -> List[Pairs]:
         allPairs = []
         for scene in (self.dir / "evaluation").iterdir():
             if not any(scene.iterdir()):
@@ -43,7 +43,7 @@ class ThreeDLoMatch(Dataset):
                 continue
             try:
                 keys, transforms = read_trajectory(self.dir / "evaluation" / scene.stem / "3dLoMatchGT.log")
-                pair = [FragmentPairs(
+                pair = [Pairs(
                             Cloud(self.dir / "fragments" / scene.stem / f"cloud_bin_{keys[idx][0]}.ply"),
                             Cloud(self.dir / "fragments" / scene.stem / f"cloud_bin_{keys[idx][1]}.ply"),
                             transforms[idx]
@@ -90,7 +90,7 @@ class ThreeDLoMatch(Dataset):
                 continue
             _process_scene(scene.stem)
 
-def compute_overlap(src: Path, target: Path, transform: np.ndarray) -> FragmentPairs:
+def compute_overlap(src: Path, target: Path, transform: np.ndarray) -> Pairs:
     """
     Utility function that computes the overlap of two fragments, given their ground truth transformation
 
@@ -102,7 +102,7 @@ def compute_overlap(src: Path, target: Path, transform: np.ndarray) -> FragmentP
     Returns:
         FragmentPairs: _description_
     """
-    pair = FragmentPairs(Cloud(src), Cloud(target), transform)
+    pair = Pairs(Cloud(src), Cloud(target), transform)
     # pair.compute_overlap() # TODO: if I call this futures complains that it cannot pickle o3d Point Clouds
     return pair
 
