@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from enum import Enum
-from customModels.IAE.encoder import KPConvFPN
+from customModels.LIM.encoder import KPConvFPN
 from customModels.IAE.decoder import LocalDecoder
 from typing import List
 from database.point import Point
@@ -19,13 +19,13 @@ class IAE(torch.nn.Module):
     def __init__(self, implicit: Implicit) -> None:
         super(IAE, self).__init__()
         self.encoder = KPConvFPN(
-            input_dim=1024,
-            output_dim=256,
-            init_dim=64,
-            kernel_size=15,
-            init_radius=2.5 * 0.025,
-            init_sigma=2.0 * 0.025,
-            group_norm=32
+            inDim=1024,
+            outDim=256,
+            iniDim=64,
+            kerSize=15,
+            iniRadius=2.5 * 0.025,
+            iniSigma=2.0 * 0.025,
+            groupNorm=32
         )
         self.decoder = LocalDecoder()
         self.implicit = implicit

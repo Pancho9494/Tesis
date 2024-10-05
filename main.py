@@ -41,10 +41,10 @@ from customModels.IAE.iae import IAE
 import open3d as o3d
 
 def testIAE():
-    # iae = IAE(IAE.Implicit.UDF)
     # data = ThreeDLoMatch()
     # for pair in data:
     #     iae(pair.src)
+    model = IAE(IAE.Implicit.UDF)
     data = ScanNet()
     for pcd, df_pcd in data:
         pcd.paint([255, 221, 0], computeNormals=True)
@@ -52,6 +52,9 @@ def testIAE():
             pcd.pcd,
             df_pcd.pcd
         ])
+        
+        model.encoder(pcd)
+        
 
     
 if __name__ == "__main__":

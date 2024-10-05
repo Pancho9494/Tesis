@@ -1,4 +1,5 @@
 import torch
+from typing import List
 from submodules.GeoTransformer.geotransformer.modules.kpconv.modules import ConvBlock, ResidualBlock, UnaryBlock, LastUnaryBlock
 from submodules.GeoTransformer.geotransformer.modules.kpconv.functional import nearest_upsample
 
@@ -36,7 +37,7 @@ class KPConvFPN(torch.nn.Module):
             LastUnaryBlock(12 * iniDim, outDim)
         ]
 
-    def forward(self, feats, data_dict):
+    def forward(self, feats, data_dict) -> List:
         points_list = data_dict['points']
         neighbors_list = data_dict['neighbors']
         subsampling_list = data_dict['subsampling']
