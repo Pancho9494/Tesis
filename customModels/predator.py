@@ -31,23 +31,24 @@ class Config:
 class Predator(ModelI):
     """
     Wrapper for the PREDATOR model that follows the ModelI interface
-
     """
     model: torch.nn.Module
     config: Config
+    _mode: str
     
     def __init__(self, mode: str) -> None:
-        path_to_test_config = Path(f"./submodules/OverlapPredator/configs/test/{mode}.yaml") 
-        config = load_config(path_to_test_config)
+        config = load_config(Path(f"./submodules/OverlapPredator/configs/test/{mode}.yaml") )
         config['architecture'] = architectures[mode]
         self.model = KPFCNN(edict(config))
-        self.model.load_state_dict(torch.load(f"./customModels/weights/PREDATOR/{mode}.pth")['state_dict'])
+        self.model.load_state_dict(torch.load(f"./customModels/weights/PREDATOR/{mode}.pth", weights_only=True)['state_dict'],)
             
         self.config = Config()
         self.config.architecture = architectures[mode]
+        self._mode = mode
     
     def __repr__(self) -> str:
-        return self.model.__repr__()
+        # return self.model.__repr__()
+        return f"Predator {self._mode}"
  
     def __call__(self, pair: Pairs) -> np.ndarray:
         self.model.eval()
@@ -57,8 +58,8 @@ class Predator(ModelI):
                 pair.target.arr,                                            # tgt_pcd
                 np.ones_like(pair.src.arr[:, :1]).astype(np.float32),       # src_feats
                 np.ones_like(pair.target.arr[:, :1]).astype(np.float32),    # tgt_feats
-                pair.transform[:3, :3],                                     # rot
-                pair.transform[:, 3],                                       # trans
+                np.ones_like(pair.truth[:3, :3]).astype(np.float32),        # rot
+                np.ones_like(pair.truth[:, 3]).astype(np.float32),          # trans
                 torch.ones(1,2).long(),                                     # correspondences
                 pair.src.arr,                                               # src_raw
                 pair.target.arr,                                            # tgt_raw
@@ -78,12 +79,16 @@ class Predator(ModelI):
             src_overlap_cloud = pair.src.prob_subsample(self.config.n_points, src_overlap, src_saliency)
             target_overlap_cloud = pair.target.prob_subsample(self.config.n_points, tgt_overlap, tgt_saliency)
             
+            # THere's something weird here, when the datased is loaded inside the threeDLoMatch class the ground truth
+            # transformation is meant to transform the target to th be position of the source, but the PREDATOR
+            # prediction is trasforming the source to the target. So, in the predator demo.py file the
+            # ransac_pose_estimation function receives(src_pcd, tgt_pcd, src_feats, tgt_feats), but here the order
+            # between src and target is flipped, so the transformation is consistent
             transform = ransac_pose_estimation(
-                src_overlap_cloud.arr, target_overlap_cloud.arr, 
-                src_overlap_cloud.features, target_overlap_cloud.features, 
+                target_overlap_cloud.arr, src_overlap_cloud.arr,
+                target_overlap_cloud.features, src_overlap_cloud.features,
                 mutual=False
             )
-            
             return transform
             
         

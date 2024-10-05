@@ -3,7 +3,7 @@ from pathlib import Path
 from submodules.OverlapPredator.lib.benchmark import read_trajectory
 import numpy as np
 import concurrent.futures
-from typing import List
+from typing import List, Tuple
 from database.pairs import Cloud, Pairs
 import random
 
@@ -19,19 +19,20 @@ class ThreeDLoMatch(Dataset):
     
     def __init__(self) -> None:
         self.dir = Path("database/raw_data/3DLoMatch")
-        self.pairs = self._join_scene_ground_truths(shuffle=True)
+        self.pairs = self._join_scene_ground_truths(shuffle=False)
+        
+        print(f"Loaded 3DLoMatch with {len(self)} point cloud pairs")
         
     def __len__(self) -> int:
         return len(self.pairs)
         
     def __getitem__(self, idx: int) -> Pairs: 
         pair = self.pairs[idx]
-        print(f"Processing pair {self.pairs[idx].src} {self.pairs[idx].target}")
-        
+    
         if (len(pair.src) > self.max_points):
-            pair.src.downsample(self.max_points)
+            pair.src.rand_downsample(self.max_points)
         if (len(pair.target) > self.max_points):
-            pair.target.downsample(self.max_points)
+            pair.target.rand_downsample(self.max_points)
     
         return pair
         
@@ -64,7 +65,7 @@ class ThreeDLoMatch(Dataset):
 
         """
         def _process_scene(scene: str) -> None:
-            print(f"Processing scene {scene}")
+            # print(f"Processing scene {scene}")
             keys, transforms = read_trajectory(self.dir / "evaluation" / scene / "gt.log")
             workload = [(self.dir / "fragments" / scene / f"cloud_bin_{keys[idx][0]}.ply", 
                         self.dir / "fragments" / scene / f"cloud_bin_{keys[idx][1]}.ply",
@@ -76,10 +77,10 @@ class ThreeDLoMatch(Dataset):
                 concurrent.futures.wait(these_futures)
             
             out = ""
-            for r in [future.result() for future in these_futures]:
-                if ((r.src.index + 1 == r.target.index) or (r.overlap_ratio > 0.3)):
+            for pair, overlap in [future.result() for future in these_futures]:
+                if ((pair.src.index + 1 == pair.target.index) or (overlap > 0.3)):
                     continue
-                out += f"{r.src.index}\t {r.target.index}\t {keys[0][-1]}	\n{np_to_str(r.transform)}"
+                out += f"{pair.src.index}\t {pair.target.index}\t {keys[0][-1]}	\n{np_to_str(pair.truth)}"
             with open(self.dir / "evaluation" / scene / "3dLoMatchGT.log", "w") as log_file:
                 log_file.write(out)
                 
@@ -90,7 +91,7 @@ class ThreeDLoMatch(Dataset):
                 continue
             _process_scene(scene.stem)
 
-def compute_overlap(src: Path, target: Path, transform: np.ndarray) -> Pairs:
+def compute_overlap(src: Path, target: Path, transform: np.ndarray) -> Tuple[Pairs, float]:
     """
     Utility function that computes the overlap of two fragments, given their ground truth transformation
 
@@ -103,8 +104,9 @@ def compute_overlap(src: Path, target: Path, transform: np.ndarray) -> Pairs:
         FragmentPairs: _description_
     """
     pair = Pairs(Cloud(src), Cloud(target), transform)
+    overlap = pair.GT_overlap()
     # pair.compute_overlap() # TODO: if I call this futures complains that it cannot pickle o3d Point Clouds
-    return pair
+    return pair, overlap
 
         
 def np_to_str(arr: np.ndarray) -> str:

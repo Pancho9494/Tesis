@@ -3,6 +3,8 @@ import open3d as o3d
 import numpy as np
 from submodules.OverlapPredator.scripts.cal_overlap import get_overlap_ratio
 from database.cloud import Cloud
+from typing import Union, Optional
+import copy
 
 @dataclass
 class Pairs:
@@ -11,24 +13,60 @@ class Pairs:
     """
     src: Cloud
     target: Cloud
-    transform: np.ndarray = field(compare=False, repr=False)
-    overlap_ratio: float = field(default=0.0, compare=False, repr=False)
+    # TODO: we should hold both the ground truth transformation and the predicted transformation, or maybe just the GT
+    # and we work with predictions just as an argument
+    truth: np.ndarray = field(compare=False, repr=False) # somehow this is completely wrong???
+    prediction: Union[np.ndarray, None] = field(default=None, compare=False, repr=False)
+    _overlap: Optional[float] = field(default=None)
     
-    def compute_overlap(self) -> None:
+    def __repr__(self) -> str:
+        return f"Pair({self.src.path.stem}, {self.target.path.stem})"
+    
+    def _compute_overlap(self, transform: np.ndarray) -> float:
         temp = self.target.pcd
-        temp.transform(self.transform)
-        self.overlap_ratio = get_overlap_ratio(self.src.pcd, temp)
+        temp.transform(transform)
+        return get_overlap_ratio(self.src.pcd, temp)
         
-    def show(self, apply_transform: bool, rotation_speed: float = 2.0) -> None:
-        def _rotate_view(vis):
-            ctr = vis.get_view_control()
-            ctr.rotate(rotation_speed, 0.0)
-            return False
+    @property
+    def overlap(self) -> float:
+        if self._overlap is None:
+            self._overlap = self.GT_overlap()
+        return self._overlap
+            
+    
+    def GT_overlap(self) -> float:
+        return self._compute_overlap(self.truth)
+    
+    def pred_overlap(self) -> float:
+        if self.prediction is None:
+            return 0.0
+        return self._compute_overlap(self.prediction)
         
-        self.src.paint(np.array([1, 0.706, 0]))
-        self.target.paint(np.array([0, 0.651, 0.929]))
+    def show(self, num_steps: int = 1) -> None:
+        def _animate_transform(vis) -> None:
+            nonlocal prediction
+            for i in range(num_steps + 1):
+                alpha = i / num_steps
+                intermediate_matrix = (1 - alpha) * np.eye(4) + alpha * self.prediction
+                prediction.pcd.transform(intermediate_matrix)
+                vis.update_geometry(prediction.pcd)
+                vis.poll_events()
+                vis.update_renderer()
+                prediction.pcd.transform(np.linalg.inv(intermediate_matrix))
         
-        if apply_transform:
-            self.src.pcd.transform(self.transform)
+        self.src.paint([1, 0.706, 0])
         
-        o3d.visualization.draw_geometries_with_animation_callback([self.src.pcd, self.target.pcd], _rotate_view)
+        ground_truth = copy.deepcopy(self.target)
+        ground_truth.paint([1, 0, 0])
+        ground_truth.pcd.transform(self.truth)
+        
+        prediction = copy.deepcopy(self.target)
+        prediction.paint([0, 0.651, 0.929])
+        
+        vis = o3d.visualization.VisualizerWithKeyCallback()
+        vis.create_window()
+        vis.add_geometry(self.src.pcd)
+        vis.add_geometry(prediction.pcd)
+        vis.add_geometry(ground_truth.pcd)
+        vis.register_key_callback(ord('A'), _animate_transform)
+        vis.run()
