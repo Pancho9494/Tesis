@@ -1,5 +1,4 @@
 # Large files
-data/*
 database/raw_data/*
 customModels/weights/*
 
