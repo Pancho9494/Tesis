@@ -1,9 +1,10 @@
 # Large files
-database/raw_data/*
-customModels/weights/*
+**/weights/*
+**/raw_data/**
 
 # Git submodules
 kernels/*
+**/submodules/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
