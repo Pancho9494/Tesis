@@ -46,6 +46,8 @@ class ResnetBlockFC(nn.Module):
 
 
 class LocalDecoder(nn.Module):
+    __device: torch.device
+
     class SampleModes(Enum):
         BILINEAR = "bilinear"
 
@@ -62,6 +64,7 @@ class LocalDecoder(nn.Module):
         padding: float = 0.1,
         d_dim: Optional[int] = None,
     ):
+        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         super().__init__()
         self.latent_dim = d_dim if (d_dim is not None) else latent_dim
         self.n_blocks = n_blocks

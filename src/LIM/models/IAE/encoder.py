@@ -15,14 +15,17 @@ from typing import Tuple, List
 
 
 class KPConvFPN(torch.nn.Module):
+    __device: torch.device
+
     def __init__(
         self, inDim: int, outDim: int, iniDim: int, kerSize: int, iniRadius: float, iniSigma: float, groupNorm: int
     ):
+        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         super(KPConvFPN, self).__init__()
         self.latent_dim = outDim
         self.blocks = [
             [
-                ConvBlock(inDim, iniDim, kerSize, iniRadius, iniSigma, groupNorm),
+                ConvBlock(inDim, iniDim, kerSize, iniRadius, iniSigma, groupNorm).to(self.__device),
                 ResidualBlock(iniDim, 2 * iniDim, kerSize, iniRadius, iniSigma, groupNorm),
             ],
             [
@@ -46,8 +49,12 @@ class KPConvFPN(torch.nn.Module):
             ],
         ]
 
+        self.blocks = [[layer.to(self.__device) for layer in block] for block in self.blocks]
+
     def forward(self, cloud: Cloud) -> torch.Tensor:
-        features = torch.ones((len(cloud), 1))
+        features = cloud.features
+        a = torch.zeros_like(features.cpu()).to(self.__device)
+        print(a.device, features.device)
 
         voxel_size = 0.025
         radius = 2.5 * voxel_size
@@ -97,11 +104,10 @@ class KPConvFPN(torch.nn.Module):
         """
         subsamples = []
         neighbors = []
-        points = torch.tensor(cloud.arr)
         radius *= vox_size
         for stage in range(len(self.blocks)):
-            points = cpp_subsampling.subsample(points=points, sampleDl=vox_size, verbose=0)
-            subsamples.append(torch.tensor(points))
+            points = cpp_subsampling.subsample(points=cloud.arr, sampleDl=vox_size, verbose=0)
+            subsamples.append(torch.tensor(points, device=self.__device))
             neighbors_indices = cpp_neighbors.batch_query(
                 queries=points,
                 supports=points,
@@ -109,7 +115,7 @@ class KPConvFPN(torch.nn.Module):
                 s_batches=np.array([len(points)], dtype=np.int32),
                 radius=radius,
             )
-            neighbors.append(torch.tensor(neighbors_indices))
+            neighbors.append(torch.tensor(neighbors_indices, device=self.__device))
             vox_size *= 2
             radius *= 2
 
@@ -135,22 +141,22 @@ class KPConvFPN(torch.nn.Module):
             subsample = subsamples[idx + 1]
 
             sub_indices = cpp_neighbors.batch_query(
-                queries=subsample,
-                supports=current_points,
+                queries=subsample.cpu().numpy(),
+                supports=current_points.cpu().numpy(),
                 q_batches=np.array([len(subsample)], dtype=np.int32),
                 s_batches=np.array([len(current_points)], dtype=np.int32),
                 radius=radius,
             )
-            subsample_neighbors.append(torch.tensor(sub_indices))
+            subsample_neighbors.append(torch.tensor(sub_indices, device=self.__device))
 
             up_indices = cpp_neighbors.batch_query(
-                queries=current_points,
-                supports=subsample,
+                queries=current_points.cpu().numpy(),
+                supports=subsample.cpu().numpy(),
                 q_batches=np.array([len(current_points)], dtype=np.int32),
                 s_batches=np.array([len(subsample)], dtype=np.int32),
                 radius=radius * 2,
             )
-            upsample_neighbors.append(torch.tensor(up_indices))
+            upsample_neighbors.append(torch.tensor(up_indices, device=self.__device))
 
             radius *= 2
 

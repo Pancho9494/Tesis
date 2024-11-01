@@ -13,7 +13,10 @@ from submodules.IAE.src.encoder.unet3d import UNet3D
 
 
 class IAE(torch.nn.Module):
+    __device: torch.device
+
     def __init__(self) -> None:
+        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         super(IAE, self).__init__()
         self.latent_dim = 256
 
@@ -38,6 +41,10 @@ class IAE(torch.nn.Module):
 
         self.unet3d = UNet3D(num_levels=4, f_maps=32, in_channels=self.latent_dim, out_channels=self.latent_dim)
 
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
     def forward(self, cloud: Cloud, implicit: Cloud) -> torch.Tensor:
         """
         IAE has three steps:
@@ -55,11 +62,9 @@ class IAE(torch.nn.Module):
         latent_vector = self.encoder(cloud)
 
         implicit.downsample(latent_vector.shape[0], mode=Cloud.DOWNSAMPLE_MODE.RANDOM)
-        feature_grid = self.__generate_grid_features(
-            torch.tensor(implicit.arr).unsqueeze(0), latent_vector.unsqueeze(0)
-        )
+        feature_grid = self.__generate_grid_features(implicit.tensor.unsqueeze(0), latent_vector.unsqueeze(0))
 
-        predicted_df = self.decoder(torch.tensor(implicit.arr), feature_grid)
+        predicted_df = self.decoder(implicit.tensor, feature_grid)
         return predicted_df
 
     def __generate_grid_features(

@@ -27,7 +27,7 @@ class ScanNet(CloudDatasetsI):
     paths: List[Path]
 
     def __init__(self) -> None:
-        self.dir = Path("src/LIM/data/raw_data/scannet.zip")
+        self.dir = Path("/mnt/nas/scannet.zip")
         self.paths = []
 
         with zipfile.ZipFile(self.dir, "r") as contents:
@@ -63,6 +63,7 @@ class ScanNet(CloudDatasetsI):
                 iou_path = str(path.parent.parent / f"points_iou/points_iou_{path.stem[-2:]}.npz")
 
                 with contents.open(pcd_path) as pcdFile:
+                    print(np.load(pcdFile)["points"])
                     cloud = Cloud.from_arr(np.load(pcdFile)["points"])
 
                 with contents.open(iou_path) as iouFile:

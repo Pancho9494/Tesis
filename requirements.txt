@@ -1,4 +1,5 @@
 alive-progress
 from-root 
-open3d>=0.18.0.0  # allows o3d.geometry.PointCloud() objects to be serialized using Pickle
+open3d>=0.18.0  # allows o3d.geometry.PointCloud() objects to be serialized using Pickle
 rich # Better tracebacks
+aim
