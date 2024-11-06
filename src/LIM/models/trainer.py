@@ -75,8 +75,17 @@ class Trainer:
                 ],
             ),
             "val": Transforms(
-                cloud_tf=[],
-                implicit_tf=[],
+                cloud_tf=[
+                    CenterZRandom(base_ratio=0.5),
+                    Downsample(n_points=4096),
+                    Noise(noise=0.005),
+                ],
+                implicit_tf=[
+                    BreakSymmetry(std_dev=10e-4),
+                    # points_file gets subsample
+                    # points_iou_file gets nothing
+                    # poitns iou is called in validation
+                ],
             ),
         }
 
@@ -128,4 +137,9 @@ class Trainer:
         self.model.eval()
         with torch.no_grad():
             cloud, implicit = self.transforms["val"].cloud_tf(cloud), self.transforms["val"].implicit_tf(implicit)
-            predicted_df = self.model(cloud, implicit)
+            predicted_df = self.model(
+                cloud, implicit
+            )  # here implicit should come from the points_iou file, which apparently is the same one in teh case of
+            # dgcnn_semseg?, only difference here would be the transformations applied to it
+
+            # TODO: add iou loss

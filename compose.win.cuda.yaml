@@ -4,15 +4,17 @@ services:
     container_name: LIM_docker
     runtime: nvidia
     environment:
-      - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CPATH=/usr/local/cuda/include
     volumes:
       - "C:/Users/labvision/dockerx:/dockerx"
       - ".:/dockerx/LIM"
       - "//c/ProgramData/NVIDIA/docker:/etc/nvidia-container-runtime"
     working_dir: "/dockerx/LIM"
-    entrypoint: ["/bin/bash"]
+    entrypoint: 
+      - "/bin/bash"
+      - ./entrypoint.sh
     stdin_open: true
     tty: true  # This is the equivalent of `-it` to keep the container interactive
     shm_size: "8G"
