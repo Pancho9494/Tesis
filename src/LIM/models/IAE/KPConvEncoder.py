@@ -20,7 +20,8 @@ class KPConvFPN(torch.nn.Module):
     def __init__(
         self, inDim: int, outDim: int, iniDim: int, kerSize: int, iniRadius: float, iniSigma: float, groupNorm: int
     ):
-        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.__device = torch.device("cpu")
         super(KPConvFPN, self).__init__()
         self.latent_dim = outDim
         self.blocks = [

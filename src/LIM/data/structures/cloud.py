@@ -11,17 +11,19 @@ from enum import Enum
 class Cloud:
     pcd: o3d.t.geometry.PointCloud
     _features: torch.Tensor
-    __o3ddevice: str = "CUDA:1" if torch.cuda.is_available() else "CPU:0"
-    __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # __o3ddevice: str = "CUDA:1" if torch.cuda.is_available() else "CPU:0"
+    __o3ddevice: str = "CPU:0"
+    # device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device: torch.device = torch.device("cpu")
 
     def __init__(self) -> None:
-        self._features = torch.tensor([], device=self.__device)
+        self._features = torch.tensor([], device=self.device)
 
     def __len__(self) -> int:
         return self.arr.shape[0]
 
     def __str__(self) -> str:
-        return f"Cloud(points={self.shape}, features={self.features.shape})"
+        return f"Cloud(Points{[v for v in self.shape]}, Features{[v for v in self.features.shape]}, {self.device})"
 
     @classmethod
     def from_path(cls, path: Path) -> "Cloud":
@@ -47,7 +49,20 @@ class Cloud:
         instance = cls()
         instance.pcd = o3d.t.geometry.PointCloud()
         instance.pcd.point.positions = o3d.core.Tensor(
-            arr.astype("float32"), o3d.core.float32, o3d.core.Device(cls.__o3ddevice)
+            arr.astype("float32"),
+            o3d.core.float32,
+            o3d.core.Device(cls.__o3ddevice),
+        )
+        return instance
+
+    @classmethod
+    def from_tensor(cls, tens: torch.Tensor) -> "Cloud":
+        instance = cls()
+        instance.pcd = o3d.t.geometry.PointCloud()
+        instance.pcd.point.positions = o3d.core.Tensor(
+            tens.cpu().numpy(),
+            o3d.core.Dtype.Float32,
+            o3d.core.Device(cls.__o3ddevice),
         )
         return instance
 
@@ -58,30 +73,33 @@ class Cloud:
     @property
     def tensor(self) -> torch.Tensor:
         tensor = torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(
-            "cuda" if torch.cuda.is_available() else "cpu"
+            # torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            torch.device("cpu")
         )
         return tensor
 
     @property
     def shape(self) -> Tuple[int, ...]:
-        return self.arr.shape
+        return self.tensor.shape
 
     @property
     def features(self) -> torch.Tensor:
         if len(self._features) == 0:
             self._features = torch.from_numpy(np.ones(self.shape[0])).to(
-                self.__device
+                self.device
             )  # torch.ones() is not working somehow with rocm???
         return self._features
 
     @features.setter
-    def features(self, value: torch.Tensor) -> None:
+    def features(self, value: Union[np.ndarray, torch.Tensor]) -> None:
         assert value.shape[0] == self.shape[0], ValueError(
             f"features vector {value.shape[0]} must have same size first dimension as pointcloud {self.shape[0]}"
         )
-        self._features = value.to(self.__device)
+        if isinstance(value, np.ndarray):
+            value = torch.from_numpy(value)
+        self._features = value.to(self.device)
 
-    def paint(self, rgb: Union[List, np.ndarray], cmap: str = "RdBu", computeNormals: bool = False) -> None:
+    def paint(self, rgb: Union[List, torch.Tensor], cmap: str = "RdBu", computeNormals: bool = False) -> None:
         """
         Paints the point cloud
 
@@ -98,7 +116,7 @@ class Cloud:
         if isinstance(rgb, list):
             self.__paint_uniform(rgb)
 
-        elif isinstance(rgb, np.ndarray):
+        elif isinstance(rgb, torch.Tensor):
             self.__paint_array(rgb, cmap)
 
         if computeNormals:
@@ -119,11 +137,14 @@ class Cloud:
         RANDOM = "_random_downsample"
         PROBABILISTIC = "_probabilistic_downsample"
 
-    def downsample(self, size: int, mode: DOWNSAMPLE_MODE, inplace=True, **kwargs) -> Union["Cloud", None]:
-        instance = self if inplace else copy.deepcopy(self)
-
+    def downsample(self, size: int, mode: DOWNSAMPLE_MODE, **kwargs) -> "Cloud":
+        instance = copy.deepcopy(self)
         if instance.arr.shape[0] <= size:
-            return None if inplace else instance
+            return instance
+
+        assert (
+            instance.tensor.shape[0] == instance.features.shape[0]
+        ), "Points and features sizes don't match in their first dimension"
 
         method = getattr(self, mode.value)
         idx = method(size, **kwargs)
@@ -143,7 +164,7 @@ class Cloud:
         except IndexError:
             pass
 
-        return None if inplace else instance
+        return instance
 
     def _random_downsample(self, size: int) -> np.ndarray:
         return np.random.randint(self.arr.shape[0], size=size)
@@ -169,19 +190,18 @@ class Cloud:
         """
         Stacks multiple clouds [N, 3] from a batch into a batch of shape [batch_size, N, 3]
         """
-        cloud = Cloud.from_arr(np.concatenate([b.arr for b in batch]))
-        cloud.features = torch.cat([b.features for b in batch])
-
+        cloud = Cloud.from_tensor(torch.stack([b.tensor for b in batch], dim=0))
+        cloud.features = torch.stack([b.features for b in batch], dim=0)
         try:  # Possibly empty tensors
             cloud.pcd.point.colors = o3d.core.Tensor(
                 np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
                 o3d.core.Dtype.Float32,
-                o3d.core.Device.CUDA,
+                o3d.core.Device(cls.__o3ddevice),
             )
             cloud.pcd.point.normals = o3d.core.Tensor(
                 np.concatenate([np.asarray(b.pcd.point.normals) for b in batch]),
                 o3d.core.Dtype.Float32,
-                o3d.core.Device.CUDA,
+                o3d.core.Device(cls.__o3ddevice),
             )
         except KeyError:
             pass

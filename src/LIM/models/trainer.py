@@ -1,19 +1,36 @@
 import torch
+import torch.nn.common_types
 from torch.utils.data import DataLoader
 import multiprocessing as mp
 from LIM.data.structures.cloud import Cloud
 from LIM.data.datasets.datasetI import CloudDatasetsI
 from aim import Run
 from dataclasses import dataclass, field
-import open3d as o3d
+from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise
+import torchvision
+from typing import Dict, List
+
+
+class Transforms:
+    cloud_tf: torchvision.transforms.Compose
+    implicit_tf: torchvision.transforms.Compose
+
+    def __init__(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:
+        self.cloud_tf = torchvision.transforms.Compose(cloud_tf)
+        self.implicit_tf = torchvision.transforms.Compose(implicit_tf)
 
 
 class Trainer:
+    # __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    __device: torch.device = torch.device("cpu")
+
     @dataclass
     class Params:
         BATCH_SIZE: int = field(default=1)
         LEARNING_RATE: float = field(default=1e-4)
         EPOCHS: int = field(default=100)
+        ACCUM_STEPS: int = field(default=16)
+        VALIDATION_PERIOD: int = field(default=10000)
 
     params: Params
     model: torch.nn.Module
@@ -21,75 +38,94 @@ class Trainer:
     dataloader: DataLoader
     optimizer: torch.optim.Optimizer
     run: Run
+    current_epoch: int
+    current_step: int
+    transforms: Dict[str, Transforms]
 
     def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
-        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.params = Trainer.Params(BATCH_SIZE=1, LEARNING_RATE=1e-4, EPOCHS=100)
+        self.params = Trainer.Params(
+            BATCH_SIZE=16,
+            LEARNING_RATE=1e-4,
+            EPOCHS=100,
+            ACCUM_STEPS=1,
+        )
         self.model = model.to(self.__device)
         self.dataset = dataset
         self.optimizer = torch.optim.Adam(model.parameters(), lr=self.params.LEARNING_RATE)
         self.loss = torch.nn.L1Loss(reduction="none")
-
         self.dataloader = DataLoader(
             dataset=self.dataset,
             batch_size=self.params.BATCH_SIZE,
             shuffle=True,
-            num_workers=0,
             collate_fn=dataset.collate,
-            # num_workers=mp.cpu_count() - 2,
-            # multiprocessing_context="spawn",
+            num_workers=mp.cpu_count() - 2,
+            multiprocessing_context="spawn",
         )
 
-        # self.run = Run(experiment="IAE Training")
-        # self.run["hyperparameters"] = self.params.__dict__
+        self.transforms = {
+            "train": Transforms(
+                cloud_tf=[
+                    CenterZRandom(base_ratio=0.5),
+                    Downsample(n_points=4096),
+                    Noise(noise=0.005),
+                ],
+                implicit_tf=[
+                    BreakSymmetry(std_dev=1e-4),
+                    Downsample(n_points=2048),
+                ],
+            ),
+            "val": Transforms(
+                cloud_tf=[],
+                implicit_tf=[],
+            ),
+        }
 
-    def train(self, plot: bool = False) -> None:
-        for epoch in range(self.params.EPOCHS):
-            self.model.train()
-            avg_loss = self.__train_step(epoch)
-            self.__val_step(epoch)
+        self.run = Run(experiment="IAE Training")
+        self.run["trainer"] = self.params.__dict__
+        self.run["model"] = self.model.params.__dict__
 
-    def __train_step(self, epoch_idx: int) -> float:
+    def train(self) -> None:
         cloud: Cloud
         implicit: Cloud
-        running_loss: float = 0.0
-        last_loss: float = 0.0
+        for epoch in range(self.params.EPOCHS):
+            self.current_epoch = epoch
+            for step, (cloud, implicit) in enumerate(self.dataloader):
+                self.current_step = step
+                self.__train_step(cloud, implicit)
 
-        return 0.0
-        # for it, (cloud, implicit) in enumerate(self.dataloader):
-        #     step_id = f"Epoch[{(epoch_idx + 1):02d}]\tIter[{(it + 1):02d}]"
-        #     self.optimizer.zero_grad()
+                if step % self.params.VALIDATION_PERIOD == 0:
+                    self.__val_step(cloud, implicit)
 
-        #     # try:
-        #     predicted_df = self.model(cloud, implicit)
-        #     # except RuntimeError as e:
-        #     #     self.run.log_error(f"{step_id} Runtime error: {e}")
-        #     #     continue
+    def __train_step(self, cloud: Cloud, implicit: Cloud) -> None:
+        self.model.train()
+        step_id = f"Epoch[{(self.current_epoch + 1):02d}]\tIter[{(self.current_step + 1):02d}]"
+        cloud, implicit = self.transforms["train"].cloud_tf(cloud), self.transforms["train"].implicit_tf(implicit)
 
-        #     loss = self.loss(predicted_df, torch.tensor(implicit.features).unsqueeze(0)).sum(-1).mean()
-        #     loss.backward()
-        #     self.run.log_info(f"{step_id}\tInstant Loss[{loss.item():5.2f}]")
+        predicted_df = self.model(cloud, implicit)
+        loss = self.loss(predicted_df, implicit.features).sum(-1).mean() / self.params.ACCUM_STEPS
+        loss.backward()
+        self.run.track(
+            loss.item(),
+            name="Instant Training L1Loss",
+            step=self.current_epoch * len(self.dataloader) + self.current_step + 1,
+            context={"subset": "train"},
+        )
+        accumulation_done = (self.current_step + 1) % self.params.ACCUM_STEPS == 0
+        on_last_batch = (self.current_step + 1) == len(self.dataloader)
+        if accumulation_done or on_last_batch:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
-        #     print(f"{step_id}\tInstant Loss[{loss.item():5.2f}]")
+            self.run.log_info(f"{step_id}\tTrain L1Loss[{loss.item():5.2f}]")
+            self.run.track(
+                loss.item(),
+                name="Train L1Loss",
+                step=self.current_epoch * len(self.dataloader) + self.current_step + 1,
+                context={"subset": "train"},
+            )
 
-        #     self.optimizer.step()
-
-        #     running_loss += loss.item()
-        #     if it % 1000 == 999:
-        #         last_loss = running_loss / 1000
-        #         self.run.log_info(f"{step_id}\tAvg Loss[{last_loss:5.2f}]")
-
-        #         self.run.track(
-        #             last_loss,
-        #             name="L1Loss",
-        #             step=epoch_idx * len(self.dataloader) + it + 1,
-        #             context={"subset": "train"},
-        #         )
-        #         running_loss = 0
-
-        # return last_loss
-
-    def __val_step(self, epoch_idx: int) -> None:
+    def __val_step(self, cloud: Cloud, implicit: Cloud) -> None:
         self.model.eval()
         with torch.no_grad():
-            ...  # run inference on validation loader here
+            cloud, implicit = self.transforms["val"].cloud_tf(cloud), self.transforms["val"].implicit_tf(implicit)
+            predicted_df = self.model(cloud, implicit)

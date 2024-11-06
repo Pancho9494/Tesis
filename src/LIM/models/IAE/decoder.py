@@ -14,39 +14,30 @@ class ResnetBlockFC(nn.Module):
         size_h (int): hidden dimension
     """
 
-    def __init__(self, size_in, size_out=None, size_h=None):
+    def __init__(self, size_in: int, size_out: Optional[int] = None, size_h: Optional[int] = None) -> None:
         super().__init__()
-        # Attributes
-        if size_out is None:
-            size_out = size_in
+        size_out = size_out if size_out is not None else size_in
+        size_h = size_h if size_h is not None else min(size_in, size_out)
 
-        if size_h is None:
-            size_h = min(size_in, size_out)
-
-        self.size_in = size_in
-        self.size_h = size_h
-        self.size_out = size_out
-        # Submodules
-        self.fc_0 = nn.Linear(size_in, size_h)
-        self.fc_1 = nn.Linear(size_h, size_out)
+        self.layers = [
+            nn.Linear(size_in, size_h),
+            nn.Linear(size_h, size_out),
+        ]
         self.actvn = nn.ReLU()
+        self.shortcut = nn.Linear(size_in, size_out, bias=False) if size_in != size_out else None
 
-        if size_in == size_out:
-            self.shortcut = None
-        else:
-            self.shortcut = nn.Linear(size_in, size_out, bias=False)
-        # Initialization
-        nn.init.zeros_(self.fc_1.weight)
+        nn.init.zeros_(self.layers[1].weight)
 
-    def forward(self, x):
-        net = self.fc_0(self.actvn(x))
-        dx = self.fc_1(self.actvn(net))
-        x_s = self.shortcut(x) if (self.shortcut is not None) else x
-        return x_s + dx
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        shortcut = self.shortcut(input) if self.shortcut is not None else input
+        for layer in self.layers:
+            input = layer(self.actvn(input))
+        return input + shortcut
 
 
 class LocalDecoder(nn.Module):
-    __device: torch.device
+    # __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    __device: torch.device = torch.device("cpu")
 
     class SampleModes(Enum):
         BILINEAR = "bilinear"
@@ -64,9 +55,8 @@ class LocalDecoder(nn.Module):
         padding: float = 0.1,
         d_dim: Optional[int] = None,
     ):
-        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         super().__init__()
-        self.latent_dim = d_dim if (d_dim is not None) else latent_dim
+        self.latent_dim = latent_dim if d_dim is None else d_dim
         self.n_blocks = n_blocks
 
         self.fc_c = nn.ModuleList([nn.Linear(self.latent_dim, hidden_size) for i in range(n_blocks)])
@@ -84,8 +74,6 @@ class LocalDecoder(nn.Module):
 
         self.th = nn.Tanh()
 
-        self.reso_grid = 32
-
     def sample_feature_grid(self, points: torch.Tensor, latent_vector: torch.Tensor) -> torch.Tensor:
         p_nor = self._normalize_3d_coordinate(points.clone(), padding=self.padding)
         p_nor = p_nor[:, :, None, None].float()
@@ -101,10 +89,6 @@ class LocalDecoder(nn.Module):
         return latent_vector.transpose(1, 2)
 
     def forward(self, points: torch.Tensor, feature_grid: torch.Tensor) -> torch.Tensor:
-        # add extra dimension to simulate batch, while we implement batch training
-        points = points.unsqueeze(0)
-        # latent_vector = latent_vector.unsqueeze(0)
-
         c = self.sample_feature_grid(points, feature_grid)
         points = points.float()
         net = self.fc_p(points)
@@ -133,16 +117,3 @@ class LocalDecoder(nn.Module):
         p_nor = p_nor + 0.5  # range (0, 1)
         p_nor = torch.clamp(p_nor, min=0.0, max=1 - 10e-4)
         return p_nor
-
-    def _coordinate2index(self, coordinates: torch.Tensor, resolution: int):
-        """
-        Normalize coordinate to [0, 1] for unit cube experiments.
-
-        Args:
-            coordinates (tensor): ...
-            resolution (int): ...
-        """
-        coordinates = (coordinates * resolution).long()
-        index = coordinates[:, :, 0] + resolution * (coordinates[:, :, 1] + resolution * coordinates[:, :, 2])
-        index = index[:, None, :]
-        return index
