@@ -1,18 +1,18 @@
-[submodule "lib/OverlapPredator"]
+[submodule "src/submodules/OverlapPredator"]
 	path = lib/OverlapPredator
 	url = https://github.com/prs-eth/OverlapPredator
-[submodule "submodules/Coarse-to-fine-correspondences"]
+[submodule "src/submodules/Coarse-to-fine-correspondences"]
 	path = submodules/CoFiNet
 	url = https://github.com/haoyu94/Coarse-to-fine-correspondences.git
-[submodule "submodules/IAE"]
+[submodule "src/submodules/IAE"]
 	path = submodules/IAE
 	url = https://github.com/SimingYan/IAE.git
-[submodule "submodules/KPConv"]
+[submodule "src/submodules/KPConv"]
 	path = submodules/KPConv
 	url = https://github.com/HuguesTHOMAS/KPConv-PyTorch.git
-[submodule "submodules/GeoTransformer"]
+[submodule "src/submodules/GeoTransformer"]
 	path = submodules/GeoTransformer
 	url = https://github.com/qinzheng93/GeoTransformer.git
-[submodule "submodules/DeepSDF"]
+[submodule "src/submodules/DeepSDF"]
 	path = submodules/DeepSDF
 	url = https://github.com/facebookresearch/DeepSDF.git
