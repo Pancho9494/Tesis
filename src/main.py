@@ -16,14 +16,15 @@ def show():
         o3d.visualization.draw_geometries(
             [
                 cloud.pcd.to_legacy(),
-                # implicit.pcd.to_legacy(),
+                implicit.pcd.to_legacy(),
             ]
         )
 
 
 def trainIAE():
-    trainer = Trainer(IAE(), ScanNet())
-    trainer.train(plot=False)
+    trainer = Trainer("IAE_Training", IAE(), ScanNet())
+    # trainer.load_model("./weights/IAE_Training.tar")
+    trainer.train()
 
 
 if __name__ == "__main__":

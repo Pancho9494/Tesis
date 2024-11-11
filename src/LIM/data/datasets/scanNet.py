@@ -6,6 +6,8 @@ import zipfile
 from typing import List, Tuple, Optional
 from LIM.data.structures.cloud import Cloud
 from LIM.data.datasets.datasetI import CloudDatasetsI
+import torchvision
+import torch
 
 
 class ScanNet(CloudDatasetsI):
@@ -26,6 +28,8 @@ class ScanNet(CloudDatasetsI):
 
     dir: Path
     paths: List[Path]
+    cloud_tf: Optional[torchvision.transforms.Compose] = None
+    implicit_tf: Optional[torchvision.transforms.Compose] = None
 
     def __init__(self) -> None:
         self.dir = Path("/mnt/nas/scannet.zip")
@@ -67,14 +71,11 @@ class ScanNet(CloudDatasetsI):
                 iou_path = str(scene / f"points_iou/points_iou_{sub_idx:02d}.npz")
 
                 with contents.open(pcd_path) as pcdFile:
-                    points = np.load(pcdFile)["points"].astype(np.float32)
-                    points = self.__crop(points)
-                    cloud = Cloud.from_arr(points)
+                    cloud = Cloud.from_arr(np.load(pcdFile)["points"].astype(np.float32))
 
                 with contents.open(iou_path) as iouFile:
                     npz = np.load(iouFile)
-                    points = npz["points"].astype(np.float32)
-                    implicit = Cloud.from_arr(points + 1e-4 * np.random.randn(*points.shape))
+                    implicit = Cloud.from_arr(npz["points"].astype(np.float32))
                     implicit.features = npz["df_value"].astype(np.float32)
         except zipfile.BadZipFile:
             pass
@@ -82,6 +83,10 @@ class ScanNet(CloudDatasetsI):
             pass
 
         return cloud, implicit
+
+    def set_transforms(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:
+        self.cloud_tf = torchvision.transforms.Compose(cloud_tf)
+        self.implicit_tf = torchvision.transforms.Compose(implicit_tf)
 
     def collate(self, batch: List[Tuple[Optional[Cloud], Optional[Cloud]]]) -> Tuple[Cloud, Cloud]:
         def __replace_nones_in_batch(batch):
@@ -98,36 +103,10 @@ class ScanNet(CloudDatasetsI):
         clouds = []
         implicits = []
         for cloud, implicit in __replace_nones_in_batch(batch):
-            cloud = cloud.downsample(4096, mode=Cloud.DOWNSAMPLE_MODE.RANDOM)
-            noise = 0.005 * np.random.randn(*cloud.arr.shape)
-            noise = noise.astype(np.float32)
-            cloud.pcd.point.positions += noise
             clouds.append(cloud)
-            implicits.append(implicit.downsample(2048, mode=Cloud.DOWNSAMPLE_MODE.RANDOM))
+            implicits.append(implicit)
 
-        return Cloud.collate(clouds), Cloud.collate(implicits)
-
-    def __crop(self, data: np.ndarray) -> np.ndarray:
-        random_ratio = 0.5 * np.random.random()
-        min_x = data[:, 0].min()
-        max_x = data[:, 0].max()
-
-        min_y = data[:, 1].min()
-        max_y = data[:, 1].max()
-
-        remove_size_x = (max_x - min_x) * random_ratio
-        remove_size_y = (max_y - min_y) * random_ratio
-
-        center_x = (min_x + max_x) / 2
-        center_y = (min_y + max_y) / 2
-        start_x = center_x - (remove_size_x / 2)
-        start_y = center_y - (remove_size_y / 2)
-
-        crop_x_idx = np.where((data[:, 0] < (start_x + remove_size_x)) & (data[:, 0] > start_x))[0]
-        crop_y_idx = np.where((data[:, 1] < (start_y + remove_size_y)) & (data[:, 1] > start_y))[0]
-
-        crop_idx = np.intersect1d(crop_x_idx, crop_y_idx)
-
-        valid_mask = np.ones(len(data), dtype=bool)
-        valid_mask[crop_idx] = 0
-        return data[valid_mask]
+        cloud_batch, implicit_batch = Cloud.collate(clouds), Cloud.collate(implicits)
+        if self.cloud_tf is not None and self.implicit_tf is not None:
+            cloud_batch, implicit_batch = self.cloud_tf(cloud_batch), self.implicit_tf(implicit_batch)
+        return cloud_batch, implicit_batch

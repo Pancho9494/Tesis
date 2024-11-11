@@ -4,11 +4,15 @@ from torch.utils.data import DataLoader
 import multiprocessing as mp
 from LIM.data.structures.cloud import Cloud
 from LIM.data.datasets.datasetI import CloudDatasetsI
+from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise
+from LIM.metrics.losses import L1Loss, IOU
 from aim import Run
 from dataclasses import dataclass, field
-from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise
 import torchvision
-from typing import Dict, List
+from typing import Dict, List, Any, Union
+from pathlib import Path
+import copy
+from tqdm import tqdm
 
 
 class Transforms:
@@ -30,7 +34,9 @@ class Trainer:
         LEARNING_RATE: float = field(default=1e-4)
         EPOCHS: int = field(default=100)
         ACCUM_STEPS: int = field(default=16)
-        VALIDATION_PERIOD: int = field(default=10000)
+        VALIDATION_PERIOD: int = field(default=10_000)
+        BACKUP_PERIOD: int = field(default=10_000)
+        VALIDATION_SPLIT: float = field(default=0.2)
 
     params: Params
     model: torch.nn.Module
@@ -40,55 +46,26 @@ class Trainer:
     run: Run
     current_epoch: int
     current_step: int
+    current_train_loss: float
+    current_val_loss: float
     transforms: Dict[str, Transforms]
 
-    def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
+    def __init__(self, tag: str, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
+        self.tag = tag
         self.params = Trainer.Params(
-            BATCH_SIZE=16,
+            BATCH_SIZE=4,
             LEARNING_RATE=1e-4,
             EPOCHS=100,
-            ACCUM_STEPS=1,
+            ACCUM_STEPS=4,
+            VALIDATION_PERIOD=100,
+            BACKUP_PERIOD=100,
+            VALIDATION_SPLIT=0.2,
         )
         self.model = model.to(self.__device)
         self.dataset = dataset
         self.optimizer = torch.optim.Adam(model.parameters(), lr=self.params.LEARNING_RATE)
-        self.loss = torch.nn.L1Loss(reduction="none")
-        self.dataloader = DataLoader(
-            dataset=self.dataset,
-            batch_size=self.params.BATCH_SIZE,
-            shuffle=True,
-            collate_fn=dataset.collate,
-            num_workers=mp.cpu_count() - 2,
-            multiprocessing_context="spawn",
-        )
-
-        self.transforms = {
-            "train": Transforms(
-                cloud_tf=[
-                    CenterZRandom(base_ratio=0.5),
-                    Downsample(n_points=4096),
-                    Noise(noise=0.005),
-                ],
-                implicit_tf=[
-                    BreakSymmetry(std_dev=1e-4),
-                    Downsample(n_points=2048),
-                ],
-            ),
-            "val": Transforms(
-                cloud_tf=[
-                    CenterZRandom(base_ratio=0.5),
-                    Downsample(n_points=4096),
-                    Noise(noise=0.005),
-                ],
-                implicit_tf=[
-                    BreakSymmetry(std_dev=10e-4),
-                    # points_file gets subsample
-                    # points_iou_file gets nothing
-                    # poitns iou is called in validation
-                ],
-            ),
-        }
-
+        self.__make_split(multiprocessing=True)
+        self.current_epoch, self.current_step = 0, 0
         self.run = Run(experiment="IAE Training")
         self.run["trainer"] = self.params.__dict__
         self.run["model"] = self.model.params.__dict__
@@ -96,50 +73,132 @@ class Trainer:
     def train(self) -> None:
         cloud: Cloud
         implicit: Cloud
-        for epoch in range(self.params.EPOCHS):
-            self.current_epoch = epoch
-            for step, (cloud, implicit) in enumerate(self.dataloader):
-                self.current_step = step
+        for self.current_epoch in range(self.current_epoch, self.params.EPOCHS):
+            for self.current_step, (cloud, implicit) in enumerate(self.train_loader, self.current_step):
                 self.__train_step(cloud, implicit)
+                self.__val_step()
+                self.__print()
+                self.__backup_model()
 
-                if step % self.params.VALIDATION_PERIOD == 0:
-                    self.__val_step(cloud, implicit)
+    def load_model(self, path: Union[str, Path]) -> None:
+        print(f"Loading model from {path}")
+        backup: Dict[str, Any] = torch.load(path, weights_only=False)
+        self.tag = backup["tag"]
+        self.model.load_state_dict(backup["model_state_dict"])
+        self.optimizer.load_state_dict(backup["optimizer_state_dict"])
+        self.current_step = backup["current_step"]
+        self.current_epoch = backup["current_epoch"]
+        self.current_train_loss = backup["current_train_loss"]
+        self.current_val_loss = backup["current_val_loss"]
+        self.params = Trainer.Params(backup["params"])
+
+    def __backup_model(self) -> None:
+        if self.current_step == 0 or self.current_step % self.params.BACKUP_PERIOD != 0:
+            return
+        params = {
+            "tag": self.tag,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "current_step": self.current_step,
+            "current_epoch": self.current_epoch,
+            "current_train_loss": self.current_train_loss,
+            "current_val_loss": self.current_val_loss,
+            "params": self.params.__dict__,
+        }
+        torch.save(params, f"./weights/{self.tag}.tar")
 
     def __train_step(self, cloud: Cloud, implicit: Cloud) -> None:
         self.model.train()
-        step_id = f"Epoch[{(self.current_epoch + 1):02d}]\tIter[{(self.current_step + 1):02d}]"
-        cloud, implicit = self.transforms["train"].cloud_tf(cloud), self.transforms["train"].implicit_tf(implicit)
-
         predicted_df = self.model(cloud, implicit)
-        loss = self.loss(predicted_df, implicit.features).sum(-1).mean() / self.params.ACCUM_STEPS
+        loss = self.train_loss(predicted_df, implicit.features) / self.params.ACCUM_STEPS
         loss.backward()
         self.run.track(
             loss.item(),
-            name="Instant Training L1Loss",
-            step=self.current_epoch * len(self.dataloader) + self.current_step + 1,
+            name="Training Loss",
+            step=self.current_epoch + self.current_step + 1,
             context={"subset": "train"},
         )
         accumulation_done = (self.current_step + 1) % self.params.ACCUM_STEPS == 0
-        on_last_batch = (self.current_step + 1) == len(self.dataloader)
+        on_last_batch = (self.current_step + 1) == len(self.train_loader)
         if accumulation_done or on_last_batch:
             self.optimizer.step()
             self.optimizer.zero_grad()
+        self.current_train_loss = loss.item()
 
-            self.run.log_info(f"{step_id}\tTrain L1Loss[{loss.item():5.2f}]")
+    def __val_step(self) -> None:
+        if self.current_step == 0 or self.current_step % self.params.VALIDATION_PERIOD != 0:
+            return
+
+        self.model.eval()
+        cloud, implicit = next(self.val_loader)
+        with torch.no_grad():
+            predicted_df = self.model(cloud, implicit)
+            loss = self.val_loss(predicted_df, implicit.features)
             self.run.track(
                 loss.item(),
-                name="Train L1Loss",
-                step=self.current_epoch * len(self.dataloader) + self.current_step + 1,
-                context={"subset": "train"},
+                name="Validation IOU",
+                step=self.current_epoch + self.current_step + 1,
+                context={"subset": "val"},
             )
+        self.current_val_loss = loss.item()
 
-    def __val_step(self, cloud: Cloud, implicit: Cloud) -> None:
-        self.model.eval()
-        with torch.no_grad():
-            cloud, implicit = self.transforms["val"].cloud_tf(cloud), self.transforms["val"].implicit_tf(implicit)
-            predicted_df = self.model(
-                cloud, implicit
-            )  # here implicit should come from the points_iou file, which apparently is the same one in teh case of
-            # dgcnn_semseg?, only difference here would be the transformations applied to it
+    def __make_split(self, multiprocessing: bool = True) -> None:
+        train_set, val_set = torch.utils.data.random_split(
+            self.dataset, [1 - self.params.VALIDATION_SPLIT, self.params.VALIDATION_SPLIT]
+        )
+        print(f"Train split has {len(train_set.indices)} point clouds")
+        print(f"Validation split has {len(val_set.indices)} point clouds")
+        train_set.dataset = copy.deepcopy(self.dataset)
+        train_set.dataset.set_transforms(
+            cloud_tf=[
+                CenterZRandom(base_ratio=0.5),
+                Downsample(n_points=4096),
+                Noise(noise=0.005),
+            ],
+            implicit_tf=[
+                BreakSymmetry(std_dev=1e-4),
+                Downsample(n_points=2048),
+            ],
+        )
+        val_set.dataset = copy.deepcopy(self.dataset)
+        val_set.dataset.set_transforms(
+            cloud_tf=[
+                CenterZRandom(base_ratio=0.5),
+                Downsample(n_points=4096),
+                Noise(noise=0.005),
+            ],
+            implicit_tf=[
+                BreakSymmetry(std_dev=10e-4),
+            ],
+        )
 
-            # TODO: add iou loss
+        self.train_loss = L1Loss(reduction="none")
+        self.train_loader = DataLoader(
+            dataset=train_set,
+            batch_size=self.params.BATCH_SIZE,
+            shuffle=True,
+            collate_fn=train_set.dataset.collate,
+            num_workers=mp.cpu_count() - 4 if multiprocessing else 0,
+            multiprocessing_context="spawn" if multiprocessing else None,
+        )
+        self.val_loss = IOU(threshold=0.5)
+        self.val_loader = iter(
+            DataLoader(
+                dataset=val_set,
+                batch_size=1,
+                shuffle=False,
+                collate_fn=val_set.dataset.collate,
+                num_workers=2 if multiprocessing else 0,
+                multiprocessing_context="spawn" if multiprocessing else None,
+            )
+        )
+
+    def __print(self) -> None:
+        step_id = f"Epoch[{(self.current_epoch):02d}]\tIter[{(self.current_step):02d}]"
+        step_id += f"\tTrain Loss[{self.current_train_loss:5.2f}]"
+        step_id += (
+            f"\tVal Loss[{self.current_val_loss:5.2f}]"
+            if self.current_step != 0 and self.current_step % self.params.VALIDATION_PERIOD == 0
+            else ""
+        )
+        print(step_id)

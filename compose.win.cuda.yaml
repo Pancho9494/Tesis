@@ -14,7 +14,7 @@ services:
     working_dir: "/dockerx/LIM"
     entrypoint: 
       - "/bin/bash"
-      - ./entrypoint.sh
+      - ./scripts/entrypoint.sh
     stdin_open: true
     tty: true  # This is the equivalent of `-it` to keep the container interactive
     shm_size: "8G"

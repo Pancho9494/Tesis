@@ -72,11 +72,13 @@ class Cloud:
 
     @property
     def tensor(self) -> torch.Tensor:
-        tensor = torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(
-            # torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            torch.device("cpu")
-        )
-        return tensor
+        return torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(torch.device("cpu"))
+
+    @tensor.setter
+    def tensor(self, value: Union[o3d.core.Tensor, torch.Tensor]) -> None:
+        if isinstance(value, torch.Tensor):
+            value = o3d.core.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(value))
+        self.pcd.point.positions = value
 
     @property
     def shape(self) -> Tuple[int, ...]:
@@ -84,10 +86,10 @@ class Cloud:
 
     @property
     def features(self) -> torch.Tensor:
+        points_dim = 1 if len(self.shape) == 3 else 0
+
         if len(self._features) == 0:
-            self._features = torch.from_numpy(np.ones(self.shape[0])).to(
-                self.device
-            )  # torch.ones() is not working somehow with rocm???
+            self._features = torch.ones(self.shape[points_dim]).to(self.device)
         return self._features
 
     @features.setter
@@ -127,7 +129,7 @@ class Cloud:
             rgb = [value / 255 for value in rgb]
         self.pcd.paint_uniform_color(np.array(rgb))
 
-    def __paint_array(self, rgb: np.ndarray, cmap: str) -> None:
+    def __paint_array(self, rgb: Union[torch.Tensor, np.ndarray], cmap: str) -> None:
         assert len(rgb) == len(self), f"Colors array ({rgb.shape}) must match shape of point cloud {self.arr.shape}"
         rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
         cmap = mpl.colormaps[cmap]
@@ -138,20 +140,15 @@ class Cloud:
         PROBABILISTIC = "_probabilistic_downsample"
 
     def downsample(self, size: int, mode: DOWNSAMPLE_MODE, **kwargs) -> "Cloud":
+        BATCH_SIZE, NUM_POINTS, N_DIM = self.tensor.shape
         instance = copy.deepcopy(self)
-        if instance.arr.shape[0] <= size:
+        if NUM_POINTS <= size:
             return instance
-
-        assert (
-            instance.tensor.shape[0] == instance.features.shape[0]
-        ), "Points and features sizes don't match in their first dimension"
 
         method = getattr(self, mode.value)
         idx = method(size, **kwargs)
-        instance.pcd.point.positions = o3d.core.Tensor(
-            self.arr[idx, :], o3d.core.float32, o3d.core.Device(self.__o3ddevice)
-        )
-        instance.features = instance.features[idx]
+        instance.tensor = torch.gather(self.tensor, dim=1, index=idx.unsqueeze(-1).expand(-1, -1, N_DIM))
+        instance.features = torch.gather(self.features, dim=1, index=idx)
         try:  # Possibly empty arrays
             instance.pcd.point.colors = o3d.core.Tensor(
                 np.asarray(instance.pcd.point.colors)[idx, :], o3d.core.float32, o3d.core.Device(self.__o3ddevice)
@@ -166,8 +163,8 @@ class Cloud:
 
         return instance
 
-    def _random_downsample(self, size: int) -> np.ndarray:
-        return np.random.randint(self.arr.shape[0], size=size)
+    def _random_downsample(self, size: int) -> torch.Tensor:
+        return torch.randint(low=0, high=size, size=(self.tensor.shape[0], size))
 
     def _probabilistic_downsample(self, size: int, overlap: torch.Tensor, saliency: torch.Tensor) -> np.ndarray:
         """
@@ -183,7 +180,7 @@ class Cloud:
         score = overlap * saliency
         temp_arr = self.arr
         probabilities = (score / score.sum()).numpy().flatten()
-        return np.random.choice(np.arange(temp_arr.shape[0]), size, replace=False, p=probabilities)
+        return np.random.choice(np.arange(temp_arr.shape[1]), size, replace=False, p=probabilities)
 
     @classmethod
     def collate(cls, batch: List["Cloud"]) -> "Cloud":
@@ -205,5 +202,4 @@ class Cloud:
             )
         except KeyError:
             pass
-
         return cloud
