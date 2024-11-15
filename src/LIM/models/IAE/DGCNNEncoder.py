@@ -17,8 +17,7 @@ from submodules.IAE.src.encoder.unet3d import UNet3D
 class DGCNN(torch.nn.Module):
     def __init__(self, k: int = 20, emb_dims: int = 1024, latent_dim: int = 128, padding: float = 0.1) -> None:
         super(DGCNN, self).__init__()
-        # self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.__device = torch.device("cpu")
+        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.LATENT_DIM = latent_dim
         self.PADDING = padding
         self.K = k  # ?
@@ -29,43 +28,43 @@ class DGCNN(torch.nn.Module):
                 Conv2d(in_channels=3 * 2, out_channels=64, kernel_size=1, bias=False),
                 BatchNorm2d(64),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
                 BatchNorm2d(64),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv2d(in_channels=64 * 2, out_channels=64, kernel_size=1, bias=False),
                 BatchNorm2d(64),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
                 BatchNorm2d(64),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv2d(in_channels=64 * 2, out_channels=64, kernel_size=1, bias=False),
                 BatchNorm2d(64),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv1d(in_channels=192, out_channels=emb_dims, kernel_size=1, bias=False),
                 BatchNorm1d(emb_dims),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv1d(in_channels=1216, out_channels=512, kernel_size=1, bias=False),
                 BatchNorm1d(512),
                 LeakyReLU(negative_slope=0.2),
-            ),
+            ).to(self.__device),
             Sequential(
                 Conv1d(in_channels=512, out_channels=latent_dim, kernel_size=1, bias=False),
                 BatchNorm1d(latent_dim),
                 LeakyReLU(negative_slope=0.2),
-            ),
-            UNet3D(in_channels=256, out_channels=256, num_levels=4, f_maps=32),
+            ).to(self.__device),
+            UNet3D(in_channels=256, out_channels=256, num_levels=4, f_maps=32).to(self.__device),
         ]
 
     def forward(self, cloud: Cloud) -> torch.Tensor:

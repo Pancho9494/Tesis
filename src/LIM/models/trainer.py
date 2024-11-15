@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import multiprocessing as mp
 from LIM.data.structures.cloud import Cloud
 from LIM.data.datasets.datasetI import CloudDatasetsI
+from LIM.data.datasets.scanNet import collate_scannet
 from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise
 from LIM.metrics.losses import L1Loss, IOU
 from aim import Run
@@ -12,7 +13,8 @@ import torchvision
 from typing import Dict, List, Any, Union
 from pathlib import Path
 import copy
-from tqdm import tqdm
+import gc
+from functools import partial
 
 
 class Transforms:
@@ -25,8 +27,7 @@ class Transforms:
 
 
 class Trainer:
-    # __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    __device: torch.device = torch.device("cpu")
+    __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @dataclass
     class Params:
@@ -56,7 +57,7 @@ class Trainer:
             BATCH_SIZE=4,
             LEARNING_RATE=1e-4,
             EPOCHS=100,
-            ACCUM_STEPS=4,
+            ACCUM_STEPS=8,
             VALIDATION_PERIOD=100,
             BACKUP_PERIOD=100,
             VALIDATION_SPLIT=0.2,
@@ -64,13 +65,17 @@ class Trainer:
         self.model = model.to(self.__device)
         self.dataset = dataset
         self.optimizer = torch.optim.Adam(model.parameters(), lr=self.params.LEARNING_RATE)
-        self.__make_split(multiprocessing=True)
+        self.__make_split(multiprocessing=False)
         self.current_epoch, self.current_step = 0, 0
         self.run = Run(experiment="IAE Training")
         self.run["trainer"] = self.params.__dict__
         self.run["model"] = self.model.params.__dict__
 
     def train(self) -> None:
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        torch.multiprocessing.set_start_method("spawn", force=True)
         cloud: Cloud
         implicit: Cloud
         for self.current_epoch in range(self.current_epoch, self.params.EPOCHS):
@@ -146,40 +151,30 @@ class Trainer:
         train_set, val_set = torch.utils.data.random_split(
             self.dataset, [1 - self.params.VALIDATION_SPLIT, self.params.VALIDATION_SPLIT]
         )
+        train_set.dataset, val_set.dataset = copy.deepcopy(self.dataset), copy.deepcopy(self.dataset)
+
         print(f"Train split has {len(train_set.indices)} point clouds")
         print(f"Validation split has {len(val_set.indices)} point clouds")
-        train_set.dataset = copy.deepcopy(self.dataset)
-        train_set.dataset.set_transforms(
-            cloud_tf=[
-                CenterZRandom(base_ratio=0.5),
-                Downsample(n_points=4096),
-                Noise(noise=0.005),
-            ],
-            implicit_tf=[
-                BreakSymmetry(std_dev=1e-4),
-                Downsample(n_points=2048),
-            ],
-        )
-        val_set.dataset = copy.deepcopy(self.dataset)
-        val_set.dataset.set_transforms(
-            cloud_tf=[
-                CenterZRandom(base_ratio=0.5),
-                Downsample(n_points=4096),
-                Noise(noise=0.005),
-            ],
-            implicit_tf=[
-                BreakSymmetry(std_dev=10e-4),
-            ],
-        )
-
         self.train_loss = L1Loss(reduction="none")
         self.train_loader = DataLoader(
             dataset=train_set,
             batch_size=self.params.BATCH_SIZE,
             shuffle=True,
-            collate_fn=train_set.dataset.collate,
+            collate_fn=partial(
+                collate_scannet,
+                cloud_tf=[
+                    CenterZRandom(base_ratio=0.5),
+                    Downsample(n_points=4096),
+                    Noise(noise=0.005),
+                ],
+                implicit_tf=[
+                    BreakSymmetry(std_dev=1e-4),
+                    Downsample(n_points=2048),
+                ],
+            ),
             num_workers=mp.cpu_count() - 4 if multiprocessing else 0,
             multiprocessing_context="spawn" if multiprocessing else None,
+            pin_memory=True,
         )
         self.val_loss = IOU(threshold=0.5)
         self.val_loader = iter(
@@ -187,9 +182,20 @@ class Trainer:
                 dataset=val_set,
                 batch_size=1,
                 shuffle=False,
-                collate_fn=val_set.dataset.collate,
+                collate_fn=partial(
+                    collate_scannet,
+                    cloud_tf=[
+                        CenterZRandom(base_ratio=0.5),
+                        Downsample(n_points=4096),
+                        Noise(noise=0.005),
+                    ],
+                    implicit_tf=[
+                        BreakSymmetry(std_dev=10e-4),
+                    ],
+                ),
                 num_workers=2 if multiprocessing else 0,
                 multiprocessing_context="spawn" if multiprocessing else None,
+                pin_memory=True,
             )
         )
 

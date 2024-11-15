@@ -41,12 +41,17 @@ class CenterZRandom(torch.nn.Module):
         if BATCH_SIZE > 1:
             return input
         points = input.tensor
-        random_ratio = 0.5 * torch.rand(BATCH_SIZE)
+        random_ratio = 0.5 * torch.rand(BATCH_SIZE).to(input.device)
 
         min_x, _ = torch.min(points[:, :, 0], dim=1)
         max_x, _ = torch.max(points[:, :, 0], dim=1)
         min_y, _ = torch.min(points[:, :, 1], dim=1)
         max_y, _ = torch.max(points[:, :, 1], dim=1)
+
+        min_x = min_x.to(input.device)
+        max_x = max_x.to(input.device)
+        min_y = min_y.to(input.device)
+        max_y = max_y.to(input.device)
 
         remove_size_x, remove_size_y = (max_x - min_x) * random_ratio, (max_y - min_y) * random_ratio
         center_x, center_y = (min_x + max_x) / 2, (min_y + max_y) / 2

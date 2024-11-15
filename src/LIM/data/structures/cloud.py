@@ -11,10 +11,8 @@ from enum import Enum
 class Cloud:
     pcd: o3d.t.geometry.PointCloud
     _features: torch.Tensor
-    # __o3ddevice: str = "CUDA:1" if torch.cuda.is_available() else "CPU:0"
-    __o3ddevice: str = "CPU:0"
-    # device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    device: torch.device = torch.device("cpu")
+    __o3ddevice: str = "CUDA:0" if torch.cuda.is_available() else "CPU:0"
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def __init__(self) -> None:
         self._features = torch.tensor([], device=self.device)
@@ -58,7 +56,7 @@ class Cloud:
     @classmethod
     def from_tensor(cls, tens: torch.Tensor) -> "Cloud":
         instance = cls()
-        instance.pcd = o3d.t.geometry.PointCloud()
+        instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.__o3ddevice))
         instance.pcd.point.positions = o3d.core.Tensor(
             tens.cpu().numpy(),
             o3d.core.Dtype.Float32,
@@ -68,11 +66,11 @@ class Cloud:
 
     @property
     def arr(self) -> np.ndarray:
-        return self.pcd.point.positions.numpy()
+        return self.pcd.point.positions.cpu().numpy()
 
     @property
     def tensor(self) -> torch.Tensor:
-        return torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(torch.device("cpu"))
+        return torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(self.device)
 
     @tensor.setter
     def tensor(self, value: Union[o3d.core.Tensor, torch.Tensor]) -> None:
@@ -164,7 +162,7 @@ class Cloud:
         return instance
 
     def _random_downsample(self, size: int) -> torch.Tensor:
-        return torch.randint(low=0, high=size, size=(self.tensor.shape[0], size))
+        return torch.randint(low=0, high=size, size=(self.tensor.shape[0], size), device=self.device)
 
     def _probabilistic_downsample(self, size: int, overlap: torch.Tensor, saliency: torch.Tensor) -> np.ndarray:
         """
@@ -182,24 +180,25 @@ class Cloud:
         probabilities = (score / score.sum()).numpy().flatten()
         return np.random.choice(np.arange(temp_arr.shape[1]), size, replace=False, p=probabilities)
 
-    @classmethod
-    def collate(cls, batch: List["Cloud"]) -> "Cloud":
-        """
-        Stacks multiple clouds [N, 3] from a batch into a batch of shape [batch_size, N, 3]
-        """
-        cloud = Cloud.from_tensor(torch.stack([b.tensor for b in batch], dim=0))
-        cloud.features = torch.stack([b.features for b in batch], dim=0)
-        try:  # Possibly empty tensors
-            cloud.pcd.point.colors = o3d.core.Tensor(
-                np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
-                o3d.core.Dtype.Float32,
-                o3d.core.Device(cls.__o3ddevice),
-            )
-            cloud.pcd.point.normals = o3d.core.Tensor(
-                np.concatenate([np.asarray(b.pcd.point.normals) for b in batch]),
-                o3d.core.Dtype.Float32,
-                o3d.core.Device(cls.__o3ddevice),
-            )
-        except KeyError:
-            pass
-        return cloud
+
+def collate_cloud(batch: List["Cloud"]) -> "Cloud":
+    """
+    Stacks multiple clouds [N, 3] from a batch into a batch of shape [batch_size, N, 3]
+    """
+    cloud = Cloud.from_tensor(torch.stack([b.tensor for b in batch], dim=0))
+    cloud.features = torch.stack([b.features.to(b.tensor.device) for b in batch], dim=0)
+    try:  # Possibly empty tensors
+        cloud.pcd.point.colors = o3d.core.Tensor(
+            np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
+            o3d.core.Dtype.Float32,
+            # o3d.core.Device(cls.__o3ddevice),
+        )
+        cloud.pcd.point.normals = o3d.core.Tensor(
+            np.concatenate([np.asarray(b.pcd.point.normals) for b in batch]),
+            o3d.core.Dtype.Float32,
+            # o3d.core.Device(cls.__o3ddevice),
+        )
+    except KeyError:
+        pass
+
+    return cloud

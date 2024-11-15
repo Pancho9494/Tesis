@@ -14,17 +14,19 @@ class ResnetBlockFC(nn.Module):
         size_h (int): hidden dimension
     """
 
+    __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def __init__(self, size_in: int, size_out: Optional[int] = None, size_h: Optional[int] = None) -> None:
         super().__init__()
         size_out = size_out if size_out is not None else size_in
         size_h = size_h if size_h is not None else min(size_in, size_out)
 
         self.layers = [
-            nn.Linear(size_in, size_h),
-            nn.Linear(size_h, size_out),
+            nn.Linear(size_in, size_h).to(self.__device),
+            nn.Linear(size_h, size_out).to(self.__device),
         ]
-        self.actvn = nn.ReLU()
-        self.shortcut = nn.Linear(size_in, size_out, bias=False) if size_in != size_out else None
+        self.actvn = nn.ReLU().to(self.__device)
+        self.shortcut = nn.Linear(size_in, size_out, bias=False).to(self.__device) if size_in != size_out else None
 
         nn.init.zeros_(self.layers[1].weight)
 
@@ -36,8 +38,7 @@ class ResnetBlockFC(nn.Module):
 
 
 class LocalDecoder(nn.Module):
-    # __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    __device: torch.device = torch.device("cpu")
+    __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     class SampleModes(Enum):
         BILINEAR = "bilinear"
@@ -59,20 +60,20 @@ class LocalDecoder(nn.Module):
         self.latent_dim = latent_dim if d_dim is None else d_dim
         self.n_blocks = n_blocks
 
-        self.fc_c = nn.ModuleList([nn.Linear(self.latent_dim, hidden_size) for i in range(n_blocks)])
+        self.fc_c = nn.ModuleList([nn.Linear(self.latent_dim, hidden_size) for i in range(n_blocks)]).to(self.__device)
 
-        self.fc_p = nn.Linear(3, hidden_size)
+        self.fc_p = nn.Linear(3, hidden_size).to(self.__device)
 
-        self.blocks = nn.ModuleList([ResnetBlockFC(hidden_size) for i in range(n_blocks)])
+        self.blocks = nn.ModuleList([ResnetBlockFC(hidden_size).to(self.__device) for i in range(n_blocks)])
 
-        self.fc_out = nn.Linear(hidden_size, 1)
+        self.fc_out = nn.Linear(hidden_size, 1).to(self.__device)
 
         self.actvn = F.relu if (not leaky) else lambda x: F.leaky_relu(x, 0.2)
 
         self.sample_mode = sample_mode
         self.padding = padding
 
-        self.th = nn.Tanh()
+        self.th = nn.Tanh().to(self.__device)
 
     def sample_feature_grid(self, points: torch.Tensor, latent_vector: torch.Tensor) -> torch.Tensor:
         p_nor = self._normalize_3d_coordinate(points.clone(), padding=self.padding)
