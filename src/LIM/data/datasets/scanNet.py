@@ -20,7 +20,6 @@ def check_file(file: Path) -> Path:
         np.load(str(file))
     except (zipfile.BadZipFile, EOFError):
         return True
-    # progress_bar.update(1)
     return False
 
 

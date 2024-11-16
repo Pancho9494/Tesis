@@ -9,8 +9,6 @@ from torch.nn import (
     LeakyReLU,
 )
 import torch_scatter
-
-# sys.path.append(f"{from_root()}/src/submodules/IAE")
 from submodules.IAE.src.encoder.unet3d import UNet3D
 
 

@@ -38,6 +38,7 @@ class Trainer:
         VALIDATION_PERIOD: int = field(default=10_000)
         BACKUP_PERIOD: int = field(default=10_000)
         VALIDATION_SPLIT: float = field(default=0.2)
+        MULTIPROCESSING: bool = field(default=True)
 
     params: Params
     model: torch.nn.Module
@@ -61,11 +62,12 @@ class Trainer:
             VALIDATION_PERIOD=100,
             BACKUP_PERIOD=100,
             VALIDATION_SPLIT=0.2,
+            MULTIPROCESSING=False,
         )
         self.model = model.to(self.__device)
         self.dataset = dataset
         self.optimizer = torch.optim.Adam(model.parameters(), lr=self.params.LEARNING_RATE)
-        self.__make_split(multiprocessing=False)
+        self.__make_split()
         self.current_epoch, self.current_step = 0, 0
         self.run = Run(experiment="IAE Training")
         self.run["trainer"] = self.params.__dict__
@@ -135,8 +137,8 @@ class Trainer:
             return
 
         self.model.eval()
-        cloud, implicit = next(self.val_loader)
         with torch.no_grad():
+            cloud, implicit = next(self.val_loader)
             predicted_df = self.model(cloud, implicit)
             loss = self.val_loss(predicted_df, implicit.features)
             self.run.track(
@@ -145,9 +147,9 @@ class Trainer:
                 step=self.current_epoch + self.current_step + 1,
                 context={"subset": "val"},
             )
-        self.current_val_loss = loss.item()
+            self.current_val_loss = loss.item()
 
-    def __make_split(self, multiprocessing: bool = True) -> None:
+    def __make_split(self) -> None:
         train_set, val_set = torch.utils.data.random_split(
             self.dataset, [1 - self.params.VALIDATION_SPLIT, self.params.VALIDATION_SPLIT]
         )
@@ -172,8 +174,8 @@ class Trainer:
                     Downsample(n_points=2048),
                 ],
             ),
-            num_workers=mp.cpu_count() - 4 if multiprocessing else 0,
-            multiprocessing_context="spawn" if multiprocessing else None,
+            num_workers=mp.cpu_count() - 4 if self.params.MULTIPROCESSING else 0,
+            multiprocessing_context="spawn" if self.params.MULTIPROCESSING else None,
             pin_memory=True,
         )
         self.val_loss = IOU(threshold=0.5)
@@ -193,8 +195,8 @@ class Trainer:
                         BreakSymmetry(std_dev=10e-4),
                     ],
                 ),
-                num_workers=2 if multiprocessing else 0,
-                multiprocessing_context="spawn" if multiprocessing else None,
+                num_workers=2 if self.params.MULTIPROCESSING else 0,
+                multiprocessing_context="spawn" if self.params.MULTIPROCESSING else None,
                 pin_memory=True,
             )
         )
