@@ -16,3 +16,12 @@
 [submodule "src/submodules/KPConv-PyTorch"]
 	path = src/submodules/KPConv-PyTorch
 	url = https://github.com/HuguesTHOMAS/KPConv-PyTorch.git
+[submodule "src/submodules/dgcnn.pytorch"]
+	path = src/submodules/dgcnn.pytorch
+	url = https://github.com/antao97/dgcnn.pytorch.git
+[submodule "src/submodules/convolutional_occupancy_networks"]
+	path = src/submodules/convolutional_occupancy_networks
+	url = https://github.com/autonomousvision/convolutional_occupancy_networks.git
+[submodule "src/submodules/FoldingNet"]
+	path = src/submodules/FoldingNet
+	url = https://github.com/qinglew/FoldingNet.git
