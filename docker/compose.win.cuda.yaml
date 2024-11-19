@@ -9,18 +9,19 @@ services:
       - CPATH=/usr/local/cuda/include
     volumes:
       - "C:/Users/labvision/dockerx:/dockerx"
-      - ".:/dockerx/LIM"
+      - "..:/dockerx/LIM"
       - "//c/ProgramData/NVIDIA/docker:/etc/nvidia-container-runtime"
     working_dir: "/dockerx/LIM"
     entrypoint: 
       - "/bin/bash"
-      - ./scripts/entrypoint.sh
+      # - ./scripts/entrypoint.sh
     stdin_open: true
     tty: true  # This is the equivalent of `-it` to keep the container interactive
     shm_size: "8G"
     group_add:
       - "video"
     ipc: "host"
+    network_mode: 'host'
     cap_add:
       - "SYS_PTRACE"
     security_opt:

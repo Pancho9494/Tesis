@@ -8,6 +8,7 @@ services:
     group_add:
       - "video"
     ipc: "host"
+    network_mode: 'host'
     cap_add:
       - "SYS_PTRACE"
     security_opt:
@@ -15,7 +16,7 @@ services:
     shm_size: "8G"
     volumes:
       - "$HOME/dockerx:/dockerx"
-      - ".:/dockerx/LIM"
+      - "..:/dockerx/LIM"
       - "/tmp/.X11-unix:/tmp/.X11-unix"  # Share the X11 socket with the container
     working_dir: "/dockerx/LIM"
     entrypoint: "/bin/bash"
@@ -24,3 +25,5 @@ services:
     environment:
       - DISPLAY
       - HSA_OVERRIDE_GFX_VERSION=10.3.0
+    ports:
+      - "43800:80"
