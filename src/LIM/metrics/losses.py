@@ -9,6 +9,8 @@ class L1Loss:
         self.loss = torch.nn.L1Loss(**kwargs)
 
     def __call__(self, predicted: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
+        # print(predicted.shape, predicted)
+        # print(real.shape, real)
         return self.loss(predicted, real).sum(-1).mean()
 
 

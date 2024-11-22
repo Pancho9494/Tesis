@@ -1,5 +1,8 @@
 import torch
 from LIM.data.structures.cloud import Cloud
+import numpy as np
+
+np.random.seed(42)
 
 
 class BreakSymmetry(torch.nn.Module):

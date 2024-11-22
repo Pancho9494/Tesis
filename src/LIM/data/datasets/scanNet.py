@@ -94,8 +94,10 @@ class ScanNet(CloudDatasetsI):
 
         pointcloud_file, iou_file = future1.result(), future2.result()
         cloud = Cloud.from_arr(pointcloud_file["points"].astype(np.float32))
+        cloud.path = scene / f"pointcloud/pointcloud_{sub_idx:02d}.npz"
         implicit = Cloud.from_arr(iou_file["points"].astype(np.float32))
         implicit.features = iou_file["df_value"].astype(np.float32)
+        implicit.path = scene / f"points_iou/points_iou_{sub_idx:02d}.npz"
         return cloud, implicit
 
     def set_transforms(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:

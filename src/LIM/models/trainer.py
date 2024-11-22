@@ -15,6 +15,7 @@ from pathlib import Path
 import copy
 import gc
 from functools import partial
+from torchinfo import summary
 
 
 class Transforms:
@@ -58,7 +59,7 @@ class Trainer:
             BATCH_SIZE=4,
             LEARNING_RATE=1e-4,
             EPOCHS=100,
-            ACCUM_STEPS=8,
+            ACCUM_STEPS=4,
             VALIDATION_PERIOD=100,
             BACKUP_PERIOD=100,
             VALIDATION_SPLIT=0.2,
@@ -72,6 +73,8 @@ class Trainer:
         self.run = Run(experiment="IAE Training")
         self.run["trainer"] = self.params.__dict__
         self.run["model"] = self.model.params.__dict__
+
+        self.testloss = torch.nn.L1Loss(reduction="none")
 
     def train(self) -> None:
         gc.collect()
@@ -117,10 +120,11 @@ class Trainer:
     def __train_step(self, cloud: Cloud, implicit: Cloud) -> None:
         self.model.train()
         predicted_df = self.model(cloud, implicit)
-        loss = self.train_loss(predicted_df, implicit.features) / self.params.ACCUM_STEPS
-        loss.backward()
+        step_loss = self.train_loss(predicted_df, implicit.features)
+        accum_loss = step_loss / self.params.ACCUM_STEPS
+        accum_loss.backward()
         self.run.track(
-            loss.item(),
+            step_loss.item(),
             name="Training Loss",
             step=self.current_epoch + self.current_step + 1,
             context={"subset": "train"},
@@ -130,7 +134,7 @@ class Trainer:
         if accumulation_done or on_last_batch:
             self.optimizer.step()
             self.optimizer.zero_grad()
-        self.current_train_loss = loss.item()
+        self.current_train_loss = step_loss.item()
 
     def __val_step(self) -> None:
         if self.current_step == 0 or self.current_step % self.params.VALIDATION_PERIOD != 0:

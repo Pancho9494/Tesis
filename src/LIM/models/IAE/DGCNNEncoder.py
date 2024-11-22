@@ -22,81 +22,79 @@ class DGCNN(torch.nn.Module):
         self.GRID_RESOLUTION = 32
 
         NUM_DIMS = 3
-        self.layers = [
-            Sequential(
-                Conv2d(in_channels=NUM_DIMS * 2, out_channels=64, kernel_size=1, bias=False),
-                BatchNorm2d(64),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
-                BatchNorm2d(64),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv2d(in_channels=64 * 2, out_channels=64, kernel_size=1, bias=False),
-                BatchNorm2d(64),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
-                BatchNorm2d(64),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv2d(in_channels=64 * 2, out_channels=64, kernel_size=1, bias=False),
-                BatchNorm2d(64),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv1d(in_channels=192, out_channels=emb_dims, kernel_size=1, bias=False),
-                BatchNorm1d(emb_dims),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv1d(in_channels=1216, out_channels=512, kernel_size=1, bias=False),
-                BatchNorm1d(512),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            Sequential(
-                Conv1d(in_channels=512, out_channels=latent_dim, kernel_size=1, bias=False),
-                BatchNorm1d(latent_dim),
-                LeakyReLU(negative_slope=0.2),
-            ).to(self.__device),
-            UNet3D(in_channels=256, out_channels=256, num_levels=4, f_maps=32).to(self.__device),
-        ]
+        self.conv1 = Sequential(
+            Conv2d(in_channels=NUM_DIMS * 2, out_channels=64, kernel_size=1, bias=False),
+            BatchNorm2d(64),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv2 = Sequential(
+            Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
+            BatchNorm2d(64),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv3 = Sequential(
+            Conv2d(in_channels=64 * 2, out_channels=64, kernel_size=1, bias=False),
+            BatchNorm2d(64),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv4 = Sequential(
+            Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
+            BatchNorm2d(64),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv5 = Sequential(
+            Conv2d(in_channels=64 * 2, out_channels=64, kernel_size=1, bias=False),
+            BatchNorm2d(64),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv6 = Sequential(
+            Conv1d(in_channels=192, out_channels=emb_dims, kernel_size=1, bias=False),
+            BatchNorm1d(emb_dims),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv7 = Sequential(
+            Conv1d(in_channels=1216, out_channels=512, kernel_size=1, bias=False),
+            BatchNorm1d(512),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.conv8 = Sequential(
+            Conv1d(in_channels=512, out_channels=latent_dim, kernel_size=1, bias=False),
+            BatchNorm1d(latent_dim),
+            LeakyReLU(negative_slope=0.2),
+        )
+        self.unet3d = UNet3D(in_channels=256, out_channels=256, num_levels=4, f_maps=32)
 
     def forward(self, cloud: Cloud) -> torch.Tensor:
         features = cloud.tensor.permute(0, 2, 1).contiguous()
         BATCH_SIZE, NUM_DIMS, NUM_POINTS = features.size()
 
         features = self._get_graph_feature(features)
-        features = self.layers[0](features)
-        features = self.layers[1](features)
+        features = self.conv1(features)
+        features = self.conv2(features)
         features1 = features.max(dim=-1, keepdim=False)[0]
 
         features = self._get_graph_feature(features1)
-        features = self.layers[2](features)
-        features = self.layers[3](features)
+        features = self.conv3(features)
+        features = self.conv4(features)
         features2 = features.max(dim=-1, keepdim=False)[0]
 
         features = self._get_graph_feature(features2)
-        features = self.layers[4](features)
+        features = self.conv5(features)
         features3 = features.max(dim=-1, keepdim=False)[0]
 
         features = torch.cat((features1, features2, features3), dim=1)
 
-        features = self.layers[5](features)
+        features = self.conv6(features)
         features = features.max(dim=-1, keepdim=True)[0]
         features = features.repeat(1, 1, NUM_POINTS)
         features = torch.cat((features, features1, features2, features3), dim=1)
 
-        features = self.layers[6](features)
-        features = self.layers[7](features)
+        features = self.conv7(features)
+        features = self.conv8(features)
 
         features = features.permute(0, 2, 1).contiguous()
-        grid_featrues = self._generate_grid_features(cloud.tensor, features)
-        return self.layers[8](grid_featrues)
+        grid_features = self._generate_grid_features(cloud.tensor, features)
+        return self.unet3d(grid_features)
 
     def _get_graph_feature(self, x: torch.Tensor) -> torch.Tensor:
         """

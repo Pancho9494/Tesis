@@ -1,12 +1,12 @@
-from rich.traceback import install
-
-install(show_locals=False)
-
+import asyncio
 from LIM.models.IAE.iae import IAE
 from LIM.models.trainer import Trainer
 from LIM.data.datasets.scanNet import ScanNet
 import open3d as o3d
-import asyncio
+from rich.traceback import install
+import torch
+
+install(show_locals=False)
 
 
 def show():

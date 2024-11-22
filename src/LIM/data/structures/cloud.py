@@ -1,11 +1,13 @@
 import numpy as np
 import open3d as o3d
 from pathlib import Path
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Optional
 import torch
 import copy
 import matplotlib as mpl
 from enum import Enum
+
+np.random.seed(42)
 
 
 class Cloud:
@@ -13,6 +15,7 @@ class Cloud:
     _features: torch.Tensor
     __o3ddevice: str = "CUDA:0" if torch.cuda.is_available() else "CPU:0"
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    path: Optional[Path] = ""
 
     def __init__(self) -> None:
         self._features = torch.tensor([], device=self.device)
@@ -21,7 +24,7 @@ class Cloud:
         return self.arr.shape[0]
 
     def __str__(self) -> str:
-        return f"Cloud(Points{[v for v in self.shape]}, Features{[v for v in self.features.shape]}, {self.device})"
+        return f"Cloud(Path: {self.path} Points{[v for v in self.shape]}, Features{[v for v in self.features.shape]}, {self.device})"
 
     @classmethod
     def from_path(cls, path: Path) -> "Cloud":
@@ -66,7 +69,7 @@ class Cloud:
 
     @property
     def arr(self) -> np.ndarray:
-        return self.pcd.point.positions.cpu().numpy()
+        return self.pcd.point.positions.cpu().contiguous().numpy().astype(np.float64)
 
     @property
     def tensor(self) -> torch.Tensor:
@@ -129,6 +132,7 @@ class Cloud:
 
     def __paint_array(self, rgb: Union[torch.Tensor, np.ndarray], cmap: str) -> None:
         assert len(rgb) == len(self), f"Colors array ({rgb.shape}) must match shape of point cloud {self.arr.shape}"
+        rgb = rgb.cpu().numpy()
         rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
         cmap = mpl.colormaps[cmap]
         self.pcd.point.colors = o3d.core.Tensor(cmap(rgb)[:, :3], o3d.core.float32, o3d.core.Device(self.__o3ddevice))
@@ -158,7 +162,6 @@ class Cloud:
             pass
         except IndexError:
             pass
-
         return instance
 
     def _random_downsample(self, size: int) -> torch.Tensor:
@@ -187,6 +190,7 @@ def collate_cloud(batch: List["Cloud"]) -> "Cloud":
     """
     cloud = Cloud.from_tensor(torch.stack([b.tensor for b in batch], dim=0))
     cloud.features = torch.stack([b.features.to(b.tensor.device) for b in batch], dim=0)
+    cloud.path = [b.path for b in batch]
     try:  # Possibly empty tensors
         cloud.pcd.point.colors = o3d.core.Tensor(
             np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
@@ -198,7 +202,7 @@ def collate_cloud(batch: List["Cloud"]) -> "Cloud":
             o3d.core.Dtype.Float32,
             # o3d.core.Device(cls.__o3ddevice),
         )
+
     except KeyError:
         pass
-
     return cloud

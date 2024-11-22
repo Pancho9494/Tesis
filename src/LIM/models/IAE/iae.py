@@ -5,6 +5,7 @@ from from_root import from_root
 sys.path.append(f"{from_root()}/src/submodules/GeoTransformer")
 sys.path.append(f"{from_root()}/src/submodules/IAE")
 from LIM.models.IAE.DGCNNEncoder import DGCNN
+
 from LIM.models.IAE.decoder import LocalDecoder
 from LIM.data.structures.cloud import Cloud
 import torch
