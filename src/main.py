@@ -1,10 +1,12 @@
 import asyncio
+from LIM.models.IAE.DGCNNEncoder import DGCNN
 from LIM.models.IAE.iae import IAE
 from LIM.models.trainer import Trainer
 from LIM.data.datasets.scanNet import ScanNet
+
 import open3d as o3d
 from rich.traceback import install
-import torch
+from config import settings
 
 install(show_locals=False)
 
@@ -28,7 +30,16 @@ def cleanDataset():
 
 
 def trainIAE():
-    trainer = Trainer("IAE_Training", IAE(), ScanNet())
+    model = IAE(
+        DGCNN(
+            knn=settings.MODEL.ENCODER.KNN,
+            emb_dims=settings.MODEL.ENCODER.EMB_DIM,
+            latent_dim=settings.MODEL.LATENT_DIM,
+            padding=settings.MODEL.ENCODER.PADDING,
+        )
+    )
+    dataset = ScanNet()
+    trainer = Trainer("IAE_Training", model, dataset)
     # trainer.load_model("./weights/IAE_Training.tar")
     trainer.train()
 

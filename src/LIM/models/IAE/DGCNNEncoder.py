@@ -14,6 +14,7 @@ from submodules.IAE.src.encoder.unet3d import UNet3D
 
 class DGCNN(torch.nn.Module):
     def __init__(self, knn: int = 20, emb_dims: int = 1024, latent_dim: int = 128, padding: float = 0.1) -> None:
+        print(f"Encoder got: {knn, emb_dims, latent_dim, padding}")
         super(DGCNN, self).__init__()
         self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.LATENT_DIM = latent_dim
