@@ -1,3 +1,8 @@
+import sys
+from from_root import from_root
+
+# I very much don't like having to do this, but import shenanigans won
+sys.path.append(f"{from_root()}/src/submodules/GeoTransformer")
 from LIM.models.IAE.decoder import LocalDecoder
 from LIM.data.structures.cloud import Cloud
 import torch
@@ -9,7 +14,7 @@ class IAE(torch.nn.Module):
 
     def __init__(self, encoder: torch.nn.Module) -> None:
         super(IAE, self).__init__()
-
+        print(settings.MODEL)
         self.encoder = encoder
         self.decoder = LocalDecoder(
             latent_dim=settings.MODEL.LATENT_DIM,

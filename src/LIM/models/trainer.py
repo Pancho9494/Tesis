@@ -60,7 +60,7 @@ class Trainer:
         self.current = Trainer.Current()
         self.run = Run(experiment="IAE Training")
         self.run["trainer"] = settings.TRAINER.__dict__
-        self.run["model"] = settings.MODEL.__dict__
+        # self.run["model"] = settings.MODEL.__dict__
 
     def train(self) -> None:
         gc.collect()
@@ -140,6 +140,8 @@ class Trainer:
             )
             self.current.val_loss = loss.item()
             if self.current.val_loss > self.current.best_val_loss:
+                self.current.best_val_loss = self.current.val_loss
+                print(f"Backing up best model [{self.current.val_loss}]")
                 self.current.best_model = self.model.state_dict()
                 self.__backup_model(self.current.best_model, "best")
 

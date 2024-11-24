@@ -1,4 +1,8 @@
 import asyncio
+import sys
+from from_root import from_root
+
+sys.path.append(f"{from_root()}/src/submodules/IAE")
 from LIM.models.IAE.DGCNNEncoder import DGCNN
 from LIM.models.IAE.iae import IAE
 from LIM.models.trainer import Trainer
