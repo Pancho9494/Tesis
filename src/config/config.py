@@ -12,6 +12,7 @@ class Encoder(BaseSettings):
     KNN: int
     EMB_DIM: int
     PADDING: float
+    GRID_RES: int
 
 
 class Decoder(BaseSettings):

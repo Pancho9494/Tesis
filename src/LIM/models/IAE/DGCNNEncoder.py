@@ -8,18 +8,14 @@ from torch.nn import (
     Conv2d,
     LeakyReLU,
 )
-import torch_scatter
-from submodules.IAE.src.encoder.unet3d import UNet3D
 
 
 class DGCNN(torch.nn.Module):
-    def __init__(self, knn: int = 20, emb_dims: int = 1024, latent_dim: int = 128, padding: float = 0.1) -> None:
+    def __init__(self, knn: int = 20, emb_dims: int = 1024, latent_dim: int = 128) -> None:
         super(DGCNN, self).__init__()
         self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.LATENT_DIM = latent_dim
-        self.PADDING = padding
-        self.KNN = knn
-        self.GRID_RESOLUTION = 32
+        self.KNN = knn  # yes
 
         NUM_DIMS = 3
         self.conv1 = Sequential(
@@ -58,11 +54,10 @@ class DGCNN(torch.nn.Module):
             LeakyReLU(negative_slope=0.2),
         )
         self.conv8 = Sequential(
-            Conv1d(in_channels=512, out_channels=latent_dim, kernel_size=1, bias=False),
-            BatchNorm1d(latent_dim),
+            Conv1d(in_channels=512, out_channels=self.LATENT_DIM, kernel_size=1, bias=False),
+            BatchNorm1d(self.LATENT_DIM),
             LeakyReLU(negative_slope=0.2),
         )
-        self.unet3d = UNet3D(in_channels=256, out_channels=256, num_levels=4, f_maps=32)
 
     def forward(self, cloud: Cloud) -> torch.Tensor:
         features = cloud.tensor.permute(0, 2, 1).contiguous()
@@ -92,9 +87,7 @@ class DGCNN(torch.nn.Module):
         features = self.conv7(features)
         features = self.conv8(features)
 
-        features = features.permute(0, 2, 1).contiguous()
-        grid_features = self._generate_grid_features(cloud.tensor, features)
-        return self.unet3d(grid_features)
+        return features.permute(0, 2, 1).contiguous()
 
     def _get_graph_feature(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -135,55 +128,3 @@ class DGCNN(torch.nn.Module):
         xx = torch.sum(x**2, dim=1, keepdim=True)
         pairwise_distance = -xx - inner - xx.transpose(2, 1)
         return pairwise_distance.topk(k=self.KNN, dim=-1)[1]
-
-    def _generate_grid_features(self, points: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
-        """
-        Aggregates the feature tensor into the unit cube grid around the input tensor
-
-        Args:
-            points [BATCH_SIZE, NUM_POINTS, NUM_DIMS]: _description_
-            features [BATCH_SIZE, NUM_POINTS, LATENT_DIM]: _description_
-
-        Returns:
-            torch.Tensor [BATCH_SIZE, LATENT_DIM, GRID_RESOLUTION, GRID_RESOLUTION, GRID_RESOLUTION]:
-        """
-        points_nor = self._normalize_3d_coordinate(points.clone(), padding=self.PADDING)
-        index = self._coordinate2index(points_nor)
-        feature_grid = features.new_zeros(points.size(0), self.LATENT_DIM, self.GRID_RESOLUTION**3)
-        features = features.permute(0, 2, 1)
-        feature_grid = torch_scatter.scatter_mean(features, index, out=feature_grid)
-        feature_grid = feature_grid.reshape(
-            points.size(0), self.LATENT_DIM, self.GRID_RESOLUTION, self.GRID_RESOLUTION, self.GRID_RESOLUTION
-        )
-        return feature_grid
-
-    def _normalize_3d_coordinate(self, points: torch.Tensor, padding: float = 0.1) -> torch.Tensor:
-        """
-        Normalize coordinates to [0, 1] for unit cube experiments.
-
-        Args:
-            points [BATCH_SIZE, NUM_POINTS, NUM_DIMS]: point
-            padding: conventional padding paramter of ONet for unit cube, so [-0.5, 0.5] -> [-0.55, 0.55]
-        Returns:
-            torch.Tensor [BATCH_SIZE, NUM_POINTS, NUM_DIMS]:
-        """
-
-        p_nor = points / (1 + padding + 10e-4)  # (-0.5, 0.5)
-        p_nor = p_nor + 0.5  # range (0, 1)
-        return torch.clamp(p_nor, min=0.0, max=1 - 10e-4)
-
-    def _coordinate2index(self, coordinates: torch.Tensor):
-        """
-        Normalize coordinate to [0, 1] for unit cube experiments.
-
-        Args:
-            coordinates [BATCH_SIZE, NUM_POINTS, NUM_DIMS]: ...
-        Returns:
-            torch.Tensor [BATCH_SIZE, 1, NUM_POINTS]:
-        """
-        coordinates = (coordinates * self.GRID_RESOLUTION).long()
-        index = coordinates[:, :, 0] + self.GRID_RESOLUTION * (
-            coordinates[:, :, 1] + self.GRID_RESOLUTION * coordinates[:, :, 2]
-        )
-        index = index[:, None, :]
-        return index

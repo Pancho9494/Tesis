@@ -1,4 +1,4 @@
-import torch
+ import torch
 import torch.nn.common_types
 from torch.utils.data import DataLoader
 import multiprocessing as mp
@@ -6,17 +6,18 @@ from LIM.data.structures.cloud import Cloud
 from LIM.data.datasets.datasetI import CloudDatasetsI
 from LIM.data.datasets.scanNet import collate_scannet
 from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise
-from LIM.metrics.losses import L1Loss, IOU
+from LIM.metrics.losses import Loss, L1Loss, IOU
 from aim import Run
 from dataclasses import dataclass, field
 import torchvision
-from typing import Dict, List, Any, Union, Optional
+from typing import Dict, List, Any, Union
 from pathlib import Path
 import copy
 import gc
 from functools import partial
 from config import settings
 import numpy as np
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 class Transforms:
@@ -36,9 +37,6 @@ class Trainer:
         epoch: int = field(default=0)
         step: int = field(default=0)
         best_model: Dict[str, Any] = field(default_factory=dict)
-        train_loss: float = field(default=np.inf)
-        val_loss: float = field(default=0.0)
-        best_val_loss: float = field(default=0.0)
 
     run: Run
     current: Current
@@ -46,7 +44,10 @@ class Trainer:
     dataloader: DataLoader
     dataset: CloudDatasetsI
     optimizer: torch.optim.Optimizer
+    scheduler: torch.optim.lr_scheduler.CosineAnnealingLR
     transforms: Dict[str, Transforms]
+    l1_loss: Loss
+    iou_loss: Loss
 
     def __init__(self, tag: str, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         self.tag = tag
@@ -56,6 +57,14 @@ class Trainer:
             model.parameters(),
             lr=settings.TRAINER.LEARNING_RATE,
         )
+        self.scheduler = CosineAnnealingLR(
+            self.optimizer,
+            T_max=settings.TRAINER.EPOCHS,
+            eta_min=1e-4,
+        )
+        self.l1_loss = L1Loss(reduction="none", accum_steps=settings.TRAINER.ACCUM_STEPS)
+        self.iou_loss = IOU(threshold=0.5)
+        
         self.__make_split()
         self.current = Trainer.Current()
         self.run = Run(experiment="IAE Training")
@@ -73,8 +82,9 @@ class Trainer:
             for self.current.step, (cloud, implicit) in enumerate(self.train_loader, self.current.step):
                 self.__train_step(cloud, implicit)
                 self.__val_step()
-                self.__print()
+                self.__log(show=True)
                 self.__backup_model(self.model.state_dict(), "latest")
+            self.scheduler.step()
 
     def load_model(self, path: Union[str, Path]) -> None:
         print(f"Loading model from {path}")
@@ -84,12 +94,13 @@ class Trainer:
         self.optimizer.load_state_dict(backup["optimizer_state_dict"])
         self.current.step = backup["current_step"]
         self.current.epoch = backup["current_epoch"]
-        self.current.train_loss = backup["current_train_loss"]
-        self.current.val_loss = backup["current_val_loss"]
 
     def __backup_model(self, model: Dict[str, Any], name: str) -> None:
-        if self.current.step == 0 or self.current.step % settings.TRAINER.BACKUP_PERIOD != 0:
+        on_first_step: bool = self.current.step == 0
+        on_backup_step: bool = self.current.step % settings.TRAINER.BACKUP_PERIOD == 0
+        if on_first_step or not on_backup_step:
             return
+        
         torch.save(
             {
                 "tag": self.tag,
@@ -97,8 +108,6 @@ class Trainer:
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "current_step": self.current.step,
                 "current_epoch": self.current.epoch,
-                "current_train_loss": self.current.train_loss,
-                "current_val_loss": self.current.val_loss,
                 "params": settings.__dict__,
             },
             f"./weights/{self.tag}_{name}.tar",
@@ -107,41 +116,30 @@ class Trainer:
     def __train_step(self, cloud: Cloud, implicit: Cloud) -> None:
         self.model.train()
         predicted_df = self.model(cloud, implicit)
-        step_loss = self.train_loss(predicted_df, implicit.features)
-        accum_loss = step_loss / settings.TRAINER.ACCUM_STEPS
-        accum_loss.backward()
-        self.run.track(
-            step_loss.item(),
-            name="Training Loss",
-            step=self.current.epoch + self.current.step + 1,
-            context={"subset": "train"},
-        )
+        self.l1_loss.train(predicted_df, implicit.features, with_grad=True)
+        self.iou_loss.train(predicted_df, implicit.features)
+        
         accumulation_done = (self.current.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
         on_last_batch = (self.current.step + 1) == len(self.train_loader)
         if accumulation_done or on_last_batch:
             self.optimizer.step()
             self.optimizer.zero_grad()
-        self.current.train_loss = step_loss.item()
 
     def __val_step(self) -> None:
-        if self.current.step == 0 or self.current.step % settings.TRAINER.VALIDATION_PERIOD != 0:
+        on_first_step: bool = self.current.step == 0
+        on_validation_step: bool = self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
+        if on_first_step or not on_validation_step:
             return
 
         self.model.eval()
         with torch.no_grad():
             cloud, implicit = next(self.val_loader)
             predicted_df = self.model(cloud, implicit)
-            loss = self.val_loss(predicted_df, implicit.features)
-            self.run.track(
-                loss.item(),
-                name="Validation IOU",
-                step=self.current.epoch + self.current.step + 1,
-                context={"subset": "val"},
-            )
-            self.current.val_loss = loss.item()
-            if self.current.val_loss > self.current.best_val_loss:
-                self.current.best_val_loss = self.current.val_loss
-                print(f"Backing up best model [{self.current.val_loss}]")
+            best_l1_loss : bool = self.l1_loss.val(predicted_df, implicit.features)
+            best_iou: bool = self.iou_loss.val(predicted_df, implicit.features)
+            
+            if best_iou:
+                print(f"Backing up best model [{self.iou_loss.get}]")
                 self.current.best_model = self.model.state_dict()
                 self.__backup_model(self.current.best_model, "best")
 
@@ -153,10 +151,9 @@ class Trainer:
 
         print(f"Train split has {len(train_set.indices)} point clouds")
         print(f"Validation split has {len(val_set.indices)} point clouds")
-        self.train_loss = L1Loss(reduction="none")
         self.train_loader = DataLoader(
             dataset=train_set,
-            batch_size=settings.TRAINER.BATCH_SIZE,
+            batch_size=settings.TRAINER.BATCH_SIZE, 
             shuffle=True,
             collate_fn=partial(
                 collate_scannet,
@@ -174,7 +171,6 @@ class Trainer:
             multiprocessing_context="spawn" if settings.TRAINER.MULTIPROCESSING else None,
             pin_memory=True,
         )
-        self.val_loss = IOU(threshold=0.5)
         self.val_loader = iter(
             DataLoader(
                 dataset=val_set,
@@ -197,11 +193,25 @@ class Trainer:
             )
         )
 
-    def __print(self) -> None:
+    def __log(self, show: bool = False) -> None:
+        for loss in [self.l1_loss, self.iou_loss]:
+            for mode in ["Training", "Validation"]:
+                self.run.track(
+                    loss.get(mode),
+                    name=f"{mode} {loss.__name__}",
+                    step=self.current.epoch + self.current.step + 1,
+                    context={
+                        "subset": mode.lower(),
+                    }
+                )
+        
+        if not show:
+            return
+        
         step_id = f"Epoch[{(self.current.epoch):02d}]\tIter[{(self.current.step):02d}]"
-        step_id += f"\tTrain Loss[{self.current.train_loss:5.2f}]"
+        step_id += f"\tTrain L1Loss[{self.l1_loss.get('train'):5.2f}]"
         step_id += (
-            f"\tVal Loss[{self.current.val_loss:5.2f}]"
+            f"\tVal Loss[{self.iou_loss.get('val'):5.2f}]"
             if self.current.step != 0 and self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
             else ""
         )

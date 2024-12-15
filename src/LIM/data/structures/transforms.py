@@ -97,12 +97,13 @@ class Downsample(torch.nn.Module):
                 batch_p = input.tensor[idx]
                 batch_f = input.features[idx]
                 points.append(batch_p[~torch.isnan(batch_p).any(dim=1)])
-                features.append(batch_f[~torch.isnan(batch_f)])
+                features.append(batch_f[~torch.isnan(batch_f)].any(dim=1))
 
             input.tensor = torch.stack(points, dim=0)
             input.features = torch.stack(features, dim=0)
         except IndexError:  # no nans in the tensors
             pass
+
         return input.downsample(self.n_points, Cloud.DOWNSAMPLE_MODE.RANDOM)
 
 

@@ -87,10 +87,17 @@ class Cloud:
 
     @property
     def features(self) -> torch.Tensor:
-        points_dim = 1 if len(self.shape) == 3 else 0
+        # TODO: this method is ugly
+        empty: bool = len(self._features) == 0
 
-        if len(self._features) == 0:
-            self._features = torch.ones(self.shape[points_dim]).to(self.device)
+        if len(self.shape) == 3:
+            if empty:
+                self._features = torch.ones((self.shape[0], self.shape[1], 1)).to(self.device)
+        else:
+            if empty:
+                self._features = torch.ones((self.shape[0], 1)).to(self.device)
+            self._features = self._features.reshape(-1, 1)
+
         return self._features
 
     @features.setter
@@ -150,7 +157,7 @@ class Cloud:
         method = getattr(self, mode.value)
         idx = method(size, **kwargs)
         instance.tensor = torch.gather(self.tensor, dim=1, index=idx.unsqueeze(-1).expand(-1, -1, N_DIM))
-        instance.features = torch.gather(self.features, dim=1, index=idx)
+        instance.features = torch.gather(self.features, dim=1, index=idx.unsqueeze(-1).expand(-1, -1, 1))
         try:  # Possibly empty arrays
             instance.pcd.point.colors = o3d.core.Tensor(
                 np.asarray(instance.pcd.point.colors)[idx, :], o3d.core.float32, o3d.core.Device(self.__o3ddevice)

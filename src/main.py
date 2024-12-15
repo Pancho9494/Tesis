@@ -12,6 +12,7 @@ import open3d as o3d
 from rich.traceback import install
 from config import settings
 
+
 install(show_locals=False)
 
 
@@ -39,7 +40,6 @@ def trainIAE():
             knn=settings.MODEL.ENCODER.KNN,
             emb_dims=settings.MODEL.ENCODER.EMB_DIM,
             latent_dim=settings.MODEL.LATENT_DIM,
-            padding=settings.MODEL.ENCODER.PADDING,
         )
     )
     dataset = ScanNet()

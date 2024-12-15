@@ -1,13 +1,11 @@
+import sys
+from from_root import from_root
+
+sys.path.append(f"{from_root()}/src/submodules/KPConv")
+sys.path.append(f"{from_root()}/src/submodules/GeoTransformer")
 import numpy as np
 import torch
-from submodules.GeoTransformer.geotransformer.modules.kpconv.modules import (
-    ConvBlock,
-    ResidualBlock,
-    UnaryBlock,
-    LastUnaryBlock,
-    nearest_upsample,
-)
-
+from LIM.models.IAE.blocks import ConvBlock, ResidualBlock, UnaryBlock, LastUnaryBlock, nearest_upsample
 import submodules.KPConv.cpp_wrappers.cpp_subsampling.grid_subsampling as cpp_subsampling
 import submodules.KPConv.cpp_wrappers.cpp_neighbors.radius_neighbors as cpp_neighbors
 from LIM.data.structures.cloud import Cloud
@@ -16,6 +14,7 @@ from typing import Tuple, List
 
 class KPConvFPN(torch.nn.Module):
     __device: torch.device
+    blocks: torch.nn.ModuleList
 
     def __init__(
         self, inDim: int, outDim: int, iniDim: int, kerSize: int, iniRadius: float, iniSigma: float, groupNorm: int
@@ -23,7 +22,7 @@ class KPConvFPN(torch.nn.Module):
         self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         super(KPConvFPN, self).__init__()
         self.latent_dim = outDim
-        self.blocks = [
+        blocks = [
             [
                 ConvBlock(inDim, iniDim, kerSize, iniRadius, iniSigma, groupNorm).to(self.__device),
                 ResidualBlock(iniDim, 2 * iniDim, kerSize, iniRadius, iniSigma, groupNorm),
@@ -49,19 +48,22 @@ class KPConvFPN(torch.nn.Module):
             ],
         ]
 
-        self.blocks = [[layer.to(self.__device) for layer in block] for block in self.blocks]
+        self.blocks = torch.nn.ModuleList([torch.nn.ModuleList(block) for block in blocks])
 
     def forward(self, cloud: Cloud) -> torch.Tensor:
         features = cloud.features
-        a = torch.zeros_like(features.cpu()).to(self.__device)
-        print(a.device, features.device)
 
         voxel_size = 0.025
         radius = 2.5 * voxel_size
-        subsamples, neighbors = self._subsample_and_neighbors(cloud, voxel_size, radius)
-        subsample_neighbors, upsample_neighbors = self._sub_up_neighbors(subsamples, radius * voxel_size)
+        subsamples, lengths, neighbors = self._subsample_and_neighbors(cloud, voxel_size, radius)
+        subsample_neighbors, upsample_neighbors = self._sub_up_neighbors(subsamples, lengths, radius)
 
         residuals = {0: features}
+
+        print(f"subsamples: {[s.shape for s in subsamples]}")
+        print(f"neighbors: {[s.shape for s in neighbors]}")
+        print(f"subsample_neighbors: {[s.shape for s in subsample_neighbors]}")
+        print(f"upsample_neighbors: {[s.shape for s in upsample_neighbors]}")
         residuals[0] = self.blocks[0][0](residuals[0], subsamples[0], subsamples[0], neighbors[0])
         residuals[0] = self.blocks[0][1](residuals[0], subsamples[0], subsamples[0], neighbors[0])
 
@@ -90,7 +92,9 @@ class KPConvFPN(torch.nn.Module):
         # cloud.features = latent_vectors[1]
         return latent_vectors[1]
 
-    def _subsample_and_neighbors(self, cloud: Cloud, vox_size: float = 0.025, radius: float = 2.5) -> Tuple[List, List]:
+    def _subsample_and_neighbors(
+        self, cloud: Cloud, vox_size: float = 0.025, radius: float = 2.5
+    ) -> Tuple[List[np.ndarray], List[List[int]], List[np.ndarray]]:
         """
         Computes the grid subsampling and neighbor radius search for each layer in self.blocks
 
@@ -102,26 +106,36 @@ class KPConvFPN(torch.nn.Module):
         Returns:
             Tuple[List, List]: A pair of lists containing the outputs of each layer, as tensors
         """
-        subsamples = []
+        BATCH_SIZE, NUM_POINTS, NUM_DIMS = cloud.shape
+        subsamples = [cloud.arr.reshape(-1, 3).astype(np.float32)]
+        lengths = [[NUM_POINTS for _ in range(BATCH_SIZE)]]
         neighbors = []
-        radius *= vox_size
-        for stage in range(len(self.blocks)):
-            points = cpp_subsampling.subsample(points=cloud.arr, sampleDl=vox_size, verbose=0)
-            subsamples.append(torch.tensor(points, device=self.__device))
+        for stage in range(len(self.blocks) - 1):
+            points, n_points = cpp_subsampling.subsample_batch(
+                points=subsamples[-1],
+                batches=lengths[-1],
+                sampleDl=float(vox_size),
+                verbose=0,
+                max_p=0,
+            )
             neighbors_indices = cpp_neighbors.batch_query(
-                queries=points,
-                supports=points,
-                q_batches=np.array([len(points)], dtype=np.int32),
-                s_batches=np.array([len(points)], dtype=np.int32),
+                queries=subsamples[-1],
+                supports=subsamples[-1],
+                q_batches=lengths[-1],
+                s_batches=lengths[-1],
                 radius=radius,
             )
-            neighbors.append(torch.tensor(neighbors_indices, device=self.__device))
+            subsamples.append(points)
+            lengths.append(n_points)
+            neighbors.append(neighbors_indices)
             vox_size *= 2
             radius *= 2
 
-        return subsamples, neighbors
+        return subsamples, lengths, neighbors
 
-    def _sub_up_neighbors(self, subsamples: List[torch.Tensor], radius: float) -> Tuple[List, List]:
+    def _sub_up_neighbors(
+        self, subsamples: List[np.ndarray], lengths: List[List[int]], radius: float
+    ) -> Tuple[List, List]:
         """
         Searches for neighbors between the layers in self.blocks, i.e. the closests points each time we subsample or
         upsample.
@@ -138,23 +152,27 @@ class KPConvFPN(torch.nn.Module):
 
         for idx in range(len(self.blocks) - 1):
             current_points = subsamples[idx]
+            current_lengths = lengths[idx]
             subsample = subsamples[idx + 1]
+            sub_lengths = lengths[idx + 1]
 
             sub_indices = cpp_neighbors.batch_query(
-                queries=subsample.cpu().numpy(),
-                supports=current_points.cpu().numpy(),
-                q_batches=np.array([len(subsample)], dtype=np.int32),
-                s_batches=np.array([len(current_points)], dtype=np.int32),
+                queries=subsample,
+                supports=current_points,
+                q_batches=sub_lengths,
+                s_batches=current_lengths,
                 radius=radius,
+                # TODO: we are missing a neighbor_limits[i + 1], computed in the calibrate_neigbors_stack_mode method
             )
             subsample_neighbors.append(torch.tensor(sub_indices, device=self.__device))
 
             up_indices = cpp_neighbors.batch_query(
-                queries=current_points.cpu().numpy(),
-                supports=subsample.cpu().numpy(),
-                q_batches=np.array([len(current_points)], dtype=np.int32),
-                s_batches=np.array([len(subsample)], dtype=np.int32),
+                queries=current_points,
+                supports=subsample,
+                q_batches=current_lengths,
+                s_batches=sub_lengths,
                 radius=radius * 2,
+                # TODO: we are missing a neighbor_limits[i + 1], computed in the calibrate_neigbors_stack_mode method
             )
             upsample_neighbors.append(torch.tensor(up_indices, device=self.__device))
 

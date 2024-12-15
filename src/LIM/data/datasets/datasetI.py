@@ -13,7 +13,3 @@ class CloudDatasetsI(ABC, Dataset):
 
     @abstractmethod
     def set_transforms(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None: ...
-
-    # @classmethod
-    # @abstractmethod
-    # def collate(cls, batch: List[Any], **kwargs) -> Any: ...

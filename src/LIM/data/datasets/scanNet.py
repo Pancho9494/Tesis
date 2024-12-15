@@ -15,10 +15,10 @@ import random
 executor = ThreadPoolExecutor()
 
 
-def check_file(file: Path) -> Path:
+def check_file(file: Path) -> bool:
     try:
         np.load(str(file))
-    except (zipfile.BadZipFile, EOFError):
+    except (zipfile.BadZipFile, EOFError, ValueError):
         return True
     return False
 
@@ -53,7 +53,7 @@ class ScanNet(CloudDatasetsI):
 
         print(f"Loaded ScanNet with {len(self)} point clouds")
 
-    async def clean_bad_files(self) -> bool:
+    async def clean_bad_files(self) -> None:
         print("Cleaning ScanNet dataset")
         files_to_check = [file for scene in self.scenes for file in scene.rglob("*.npz")]
         remove = []
@@ -89,8 +89,8 @@ class ScanNet(CloudDatasetsI):
         sub = random.choice(list((scene / "pointcloud/").iterdir()))
         sub_idx = int(sub.stem[-2:])
 
-        future1 = executor.submit(__load_npz, str(scene / f"pointcloud/pointcloud_{sub_idx:02d}.npz"))
-        future2 = executor.submit(__load_npz, str(scene / f"points_iou/points_iou_{sub_idx:02d}.npz"))
+        future1 = executor.submit(__load_npz, scene / f"pointcloud/pointcloud_{sub_idx:02d}.npz")
+        future2 = executor.submit(__load_npz, scene / f"points_iou/points_iou_{sub_idx:02d}.npz")
 
         pointcloud_file, iou_file = future1.result(), future2.result()
         cloud = Cloud.from_arr(pointcloud_file["points"].astype(np.float32))
