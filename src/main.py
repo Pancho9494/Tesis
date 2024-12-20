@@ -36,7 +36,7 @@ def cleanDataset():
 
 def trainIAE():
     model = IAE(
-        DGCNN(
+        encoder=DGCNN(
             knn=settings.MODEL.ENCODER.KNN,
             emb_dims=settings.MODEL.ENCODER.EMB_DIM,
             latent_dim=settings.MODEL.LATENT_DIM,

@@ -1,5 +1,6 @@
- import torch
-import torch.nn.common_types
+import torch
+
+# import torch.nn.common_types
 from torch.utils.data import DataLoader
 import multiprocessing as mp
 from LIM.data.structures.cloud import Cloud
@@ -30,7 +31,7 @@ class Transforms:
 
 
 class Trainer:
-    __device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    __device: torch.device = torch.device(settings.DEVICE)
 
     @dataclass
     class Current:
@@ -64,7 +65,7 @@ class Trainer:
         )
         self.l1_loss = L1Loss(reduction="none", accum_steps=settings.TRAINER.ACCUM_STEPS)
         self.iou_loss = IOU(threshold=0.5)
-        
+
         self.__make_split()
         self.current = Trainer.Current()
         self.run = Run(experiment="IAE Training")
@@ -85,6 +86,7 @@ class Trainer:
                 self.__log(show=True)
                 self.__backup_model(self.model.state_dict(), "latest")
             self.scheduler.step()
+            print(f"Current learning rate: {self.scheduler.get_last_lr()}")
 
     def load_model(self, path: Union[str, Path]) -> None:
         print(f"Loading model from {path}")
@@ -100,7 +102,7 @@ class Trainer:
         on_backup_step: bool = self.current.step % settings.TRAINER.BACKUP_PERIOD == 0
         if on_first_step or not on_backup_step:
             return
-        
+
         torch.save(
             {
                 "tag": self.tag,
@@ -118,7 +120,7 @@ class Trainer:
         predicted_df = self.model(cloud, implicit)
         self.l1_loss.train(predicted_df, implicit.features, with_grad=True)
         self.iou_loss.train(predicted_df, implicit.features)
-        
+
         accumulation_done = (self.current.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
         on_last_batch = (self.current.step + 1) == len(self.train_loader)
         if accumulation_done or on_last_batch:
@@ -135,11 +137,11 @@ class Trainer:
         with torch.no_grad():
             cloud, implicit = next(self.val_loader)
             predicted_df = self.model(cloud, implicit)
-            best_l1_loss : bool = self.l1_loss.val(predicted_df, implicit.features)
+            best_l1_loss: bool = self.l1_loss.val(predicted_df, implicit.features)
             best_iou: bool = self.iou_loss.val(predicted_df, implicit.features)
-            
+
             if best_iou:
-                print(f"Backing up best model [{self.iou_loss.get}]")
+                print(f"Backing up best model [{self.iou_loss.get('val')}]")
                 self.current.best_model = self.model.state_dict()
                 self.__backup_model(self.current.best_model, "best")
 
@@ -153,7 +155,7 @@ class Trainer:
         print(f"Validation split has {len(val_set.indices)} point clouds")
         self.train_loader = DataLoader(
             dataset=train_set,
-            batch_size=settings.TRAINER.BATCH_SIZE, 
+            batch_size=settings.TRAINER.BATCH_SIZE,
             shuffle=True,
             collate_fn=partial(
                 collate_scannet,
@@ -198,21 +200,24 @@ class Trainer:
             for mode in ["Training", "Validation"]:
                 self.run.track(
                     loss.get(mode),
-                    name=f"{mode} {loss.__name__}",
+                    name=str(loss),
                     step=self.current.epoch + self.current.step + 1,
                     context={
                         "subset": mode.lower(),
-                    }
+                    },
                 )
-        
+
         if not show:
             return
-        
+
         step_id = f"Epoch[{(self.current.epoch):02d}]\tIter[{(self.current.step):02d}]"
-        step_id += f"\tTrain L1Loss[{self.l1_loss.get('train'):5.2f}]"
+        step_id += f"\tL1LossTrain[{self.l1_loss.get('train'):5.2f}] IOUTrain[{self.iou_loss.get('train'):5.2f}]"
         step_id += (
-            f"\tVal Loss[{self.iou_loss.get('val'):5.2f}]"
+            f"\tL1LossVal[{self.l1_loss.get('val'):5.2f}] IOUVal[{self.iou_loss.get('val'):5.2f}]"
             if self.current.step != 0 and self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
             else ""
         )
         print(step_id)
+
+
+# Maybe the loss objects should keep track, separately, of their validation period

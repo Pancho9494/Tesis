@@ -6,6 +6,7 @@ import torch
 import copy
 import matplotlib as mpl
 from enum import Enum
+from config import settings
 
 np.random.seed(42)
 
@@ -13,8 +14,8 @@ np.random.seed(42)
 class Cloud:
     pcd: o3d.t.geometry.PointCloud
     _features: torch.Tensor
-    __o3ddevice: str = "CUDA:0" if torch.cuda.is_available() else "CPU:0"
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device: torch.device = torch.device(settings.DEVICE)
+    __o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
     path: Optional[Path] = ""
 
     def __init__(self) -> None:
@@ -50,7 +51,7 @@ class Cloud:
         instance = cls()
         instance.pcd = o3d.t.geometry.PointCloud()
         instance.pcd.point.positions = o3d.core.Tensor(
-            arr.astype("float32"),
+            arr[~np.isnan(arr).any(axis=1)].astype("float32"),  # filter nan points
             o3d.core.float32,
             o3d.core.Device(cls.__o3ddevice),
         )
@@ -60,6 +61,11 @@ class Cloud:
     def from_tensor(cls, tens: torch.Tensor) -> "Cloud":
         instance = cls()
         instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.__o3ddevice))
+        tens = torch.nan_to_num(tens, 0.0)
+        # B, N, D = tens.shape
+        # tens_reshaped = tens.reshape(B * N, D)
+        # mask = ~torch.any(tens_reshaped.isnan(), dim=1)
+        # tens = tens_reshaped[mask]
         instance.pcd.point.positions = o3d.core.Tensor(
             tens.cpu().numpy(),
             o3d.core.Dtype.Float32,
@@ -197,6 +203,7 @@ def collate_cloud(batch: List["Cloud"]) -> "Cloud":
     """
     cloud = Cloud.from_tensor(torch.stack([b.tensor for b in batch], dim=0))
     cloud.features = torch.stack([b.features.to(b.tensor.device) for b in batch], dim=0)
+
     cloud.path = [b.path for b in batch]
     try:  # Possibly empty tensors
         cloud.pcd.point.colors = o3d.core.Tensor(
@@ -212,4 +219,5 @@ def collate_cloud(batch: List["Cloud"]) -> "Cloud":
 
     except KeyError:
         pass
+
     return cloud

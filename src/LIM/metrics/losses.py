@@ -12,10 +12,15 @@ class Metric:
     """
 
     tensor: torch.Tensor
-    current: float
-    best: float
+    current: float = field(default=0.0)
+    best: float = field(default=0.0)
+
+    def __init__(self) -> None:
+        self.tensor = torch.Tensor()
+        self.tensor.requires_grad = True
 
     def set_tensor(self, new_tensor: torch.Tensor) -> bool:
+        self.tensor = new_tensor
         self.current = new_tensor.item()
         if self.current > self.best:
             self.best = self.current
@@ -33,6 +38,10 @@ class Loss(ABC):
     _val: Metric
     accum_steps: Optional[int] = field(default=None)
 
+    def __init__(self) -> None:
+        self._train = Metric()
+        self._val = Metric()
+
     @abstractmethod
     def __call__(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor: ...
 
@@ -46,7 +55,8 @@ class Loss(ABC):
         return is_best
 
     def val(self, prediction: torch.Tensor, real: torch.Tensor) -> bool:
-        return self._val.set_tensor(self.__call__(prediction, real))
+        is_best: bool = self._val.set_tensor(self.__call__(prediction, real))
+        return is_best
 
     def get(self, mode: str) -> float:
         if mode.lower().strip() in ["train", "training"]:
@@ -59,7 +69,11 @@ class Loss(ABC):
 
 class L1Loss(Loss):
     def __init__(self, **kwargs) -> None:
-        self.loss = torch.nn.L1Loss(**kwargs)
+        super().__init__()
+        self.loss = torch.nn.L1Loss(kwargs["accum_steps"])
+
+    def __str__(self) -> str:
+        return "L1Loss"
 
     def __call__(self, predicted: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         return self.loss(predicted, real.squeeze(-1)).sum(-1).mean()
@@ -67,7 +81,11 @@ class L1Loss(Loss):
 
 class IOU(Loss):
     def __init__(self, threshold: float = 0.5) -> None:
+        super().__init__()
         self.threshold = threshold
+
+    def __str__(self) -> str:
+        return "IOU"
 
     def __call__(self, predicted: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         pred_arr: np.ndarray = (predicted <= 0.01).cpu().numpy()

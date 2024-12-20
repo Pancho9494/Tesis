@@ -70,6 +70,7 @@ class CenterZRandom(torch.nn.Module):
 
         input.tensor[crop_mask] = float("nan")
         input.features[crop_mask] = float("nan")
+
         return input
 
 
@@ -89,20 +90,17 @@ class Downsample(torch.nn.Module):
         Applies to every tensor stored in the input: coordinates, features, colors and normals
         """
 
-        try:  # drop nan rows, i.e. called Downsample without having calleds CenterZRandom
-            BATCH_SIZE, N_POINTS, N_DIM = input.shape
-            points = []
-            features = []
-            for idx in range(BATCH_SIZE):
-                batch_p = input.tensor[idx]
-                batch_f = input.features[idx]
-                points.append(batch_p[~torch.isnan(batch_p).any(dim=1)])
-                features.append(batch_f[~torch.isnan(batch_f)].any(dim=1))
+        BATCH_SIZE, N_POINTS, N_DIM = input.shape
+        points = []
+        features = []
+        for idx in range(BATCH_SIZE):
+            batch_p = input.tensor[idx]
+            batch_f = input.features[idx]
+            points.append(batch_p[~torch.isnan(batch_p).any(dim=1)])
+            features.append(batch_f[~torch.isnan(batch_f).any(dim=1)])
 
-            input.tensor = torch.stack(points, dim=0)
-            input.features = torch.stack(features, dim=0)
-        except IndexError:  # no nans in the tensors
-            pass
+        input.tensor = torch.stack(points, dim=0)
+        input.features = torch.stack(features, dim=0)
 
         return input.downsample(self.n_points, Cloud.DOWNSAMPLE_MODE.RANDOM)
 

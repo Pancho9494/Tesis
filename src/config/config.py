@@ -41,6 +41,7 @@ class Trainer(BaseSettings):
 class Settings(BaseSettings):
     MODEL: Model
     TRAINER: Trainer
+    DEVICE: str
 
     model_config = SettingsConfigDict(env_file="config.yaml", env_file_encoding="utf-8")
 

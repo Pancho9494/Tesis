@@ -10,6 +10,7 @@ import submodules.KPConv.cpp_wrappers.cpp_subsampling.grid_subsampling as cpp_su
 import submodules.KPConv.cpp_wrappers.cpp_neighbors.radius_neighbors as cpp_neighbors
 from LIM.data.structures.cloud import Cloud
 from typing import Tuple, List
+from config import settings
 
 
 class KPConvFPN(torch.nn.Module):
@@ -19,7 +20,7 @@ class KPConvFPN(torch.nn.Module):
     def __init__(
         self, inDim: int, outDim: int, iniDim: int, kerSize: int, iniRadius: float, iniSigma: float, groupNorm: int
     ):
-        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.__device = torch.device(settings.DEVICE)
         super(KPConvFPN, self).__init__()
         self.latent_dim = outDim
         blocks = [

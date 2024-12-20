@@ -8,12 +8,13 @@ from torch.nn import (
     Conv2d,
     LeakyReLU,
 )
+from config import settings
 
 
 class DGCNN(torch.nn.Module):
     def __init__(self, knn: int = 20, emb_dims: int = 1024, latent_dim: int = 128) -> None:
         super(DGCNN, self).__init__()
-        self.__device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.__device = torch.device(settings.DEVICE)
         self.LATENT_DIM = latent_dim
         self.KNN = knn  # yes
 
