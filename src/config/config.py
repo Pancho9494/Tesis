@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 import yaml
 
 
@@ -8,23 +8,26 @@ def yaml_settings_source(settings: BaseSettings) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-class Encoder(BaseSettings):
-    KNN: int
-    EMB_DIM: int
-    PADDING: float
-    GRID_RES: int
-
-
-class Decoder(BaseSettings):
-    HIDDEN_SIZE: int
-    N_BLOCKS: int
-    PADDING: float
-
-
 class Model(BaseSettings):
+    class Encoder(BaseSettings):
+        KNN: int
+        EMB_DIM: int
+        PADDING: float
+        GRID_RES: int
+
+    class Decoder(BaseSettings):
+        HIDDEN_SIZE: int
+        N_BLOCKS: int
+        PADDING: float
+
     ENCODER: Encoder
     LATENT_DIM: int
     DECODER: Decoder
+
+
+class Transforms(BaseSettings):
+    TRAIN: Dict[str, Dict[str, Any]] = {}
+    VALIDATION: Dict[str, Dict[str, Any]] = {}
 
 
 class Trainer(BaseSettings):
@@ -36,6 +39,8 @@ class Trainer(BaseSettings):
     BACKUP_PERIOD: int
     VALIDATION_SPLIT: float
     MULTIPROCESSING: bool
+    POINTCLOUD_TF: Transforms
+    IMPLICIT_GRID_TF: Transforms
 
 
 class Settings(BaseSettings):

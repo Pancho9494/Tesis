@@ -10,6 +10,7 @@ MODEL:
     N_BLOCKS: 5
     PADDING: 0.1
 
+DEVICE: "cpu"
 
 TRAINER:
     BATCH_SIZE: 1
@@ -21,4 +22,30 @@ TRAINER:
     VALIDATION_SPLIT: 0.2
     MULTIPROCESSING: false
 
-DEVICE: "cuda"
+    POINTCLOUD_TF:
+      TRAIN:
+        CENTERZRANDOM:
+          BASE_RATIO: 0.5
+        DOWNSAMPLE:
+          N_POINTS: 4096
+        NOISE:
+          NOISE: 0.005
+
+      VALIDATION:
+        CENTERZRANDOM:
+          BASE_RATIO: 0.5
+        DOWNSAMPLE:
+          N_POINTS: 4096
+        NOISE:
+          NOISE: 0.005
+
+    IMPLICIT_GRID_TF:
+      TRAIN:
+        BREAKSYMMETRY:
+          STD_DEV: 0.0004
+        DOWNSAMPLE:
+          N_POINTS: 2048
+
+      VALIDATION:
+        BREAKSYMMETRY:
+          STD_DEV: 0.0004

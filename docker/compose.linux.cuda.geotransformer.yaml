@@ -1,6 +1,6 @@
 services:
-  IAE:
-    image: IAE/cuda10.1-cudnn7
+  GeoTransformer:
+    image: GeoTransformer/cuda11.0-cudnn8
     container_name: LIM_docker
     runtime: nvidia  # Use the NVIDIA runtime
     deploy:

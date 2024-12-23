@@ -1,18 +1,32 @@
 import torch
 from LIM.data.structures.cloud import Cloud
 import numpy as np
+from abc import ABC, abstractmethod
+from typing import Dict, Any, List
 
 np.random.seed(42)
 
 
-class BreakSymmetry(torch.nn.Module):
+class TF(torch.nn.Module, ABC):
+    @abstractmethod
+    def __init__(self, **kwargs) -> None:
+        super(TF, self).__init__()
+
+    @abstractmethod
+    def __repr__(self) -> str: ...
+
+    @abstractmethod
+    def forward(self, input: Cloud) -> Cloud: ...
+
+
+class BreakSymmetry(TF):
     std_dev: float
 
     def __init__(self, std_dev: float) -> None:
         super(BreakSymmetry, self).__init__()
         self.std_dev = std_dev
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"BreakSymmetry(std_dev={self.std_dev:0.4f})"
 
     def forward(self, input: Cloud) -> Cloud:
@@ -25,14 +39,14 @@ class BreakSymmetry(torch.nn.Module):
         return input
 
 
-class CenterZRandom(torch.nn.Module):
+class CenterZRandom(TF):
     ratio: float
 
     def __init__(self, base_ratio: float) -> None:
         super(CenterZRandom, self).__init__()
         self.ratio = base_ratio * torch.rand(1).item()
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"CenterZRandom(ratio={self.ratio:0.4f})"
 
     def forward(self, input: Cloud) -> Cloud:
@@ -74,14 +88,14 @@ class CenterZRandom(torch.nn.Module):
         return input
 
 
-class Downsample(torch.nn.Module):
+class Downsample(TF):
     n_points: int
 
     def __init__(self, n_points: int) -> None:
         super(Downsample, self).__init__()
         self.n_points = n_points
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"Downsample(n_points={self.n_points})"
 
     def forward(self, input: Cloud) -> Cloud:
@@ -105,16 +119,33 @@ class Downsample(torch.nn.Module):
         return input.downsample(self.n_points, Cloud.DOWNSAMPLE_MODE.RANDOM)
 
 
-class Noise(torch.nn.Module):
+class Noise(TF):
     noise: float
 
     def __init__(self, noise: float) -> None:
         super(Noise, self).__init__()
         self.noise = noise
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"Noise(noise={self.noise:0.4f})"
 
     def forward(self, input: Cloud) -> Cloud:
         input.tensor = torch.add(input.tensor, torch.mul(self.noise, torch.rand_like(input.tensor)))
         return input
+
+
+def transform_factory(inputs: Dict[str, Dict[str, Any]]) -> List[torch.nn.Module]:
+    mappings: Dict[str, TF] = {
+        "CENTERZRANDOM": CenterZRandom,
+        "DOWNSAMPLE": Downsample,
+        "NOISE": Noise,
+        "BREAKSYMMETRY": BreakSymmetry,
+    }
+
+    out = []
+    for name, kwargs in inputs.items():
+        func = mappings[name]
+        kwargs = {k.lower(): v for k, v in kwargs.items()}
+        out.append(func(**kwargs))
+
+    return out

@@ -3,6 +3,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from typing import Optional
+from torch.cuda.amp import GradScaler
 
 
 @dataclass
@@ -36,11 +37,13 @@ class Loss(ABC):
 
     _train: Metric
     _val: Metric
+    scaler: GradScaler
     accum_steps: Optional[int] = field(default=None)
 
-    def __init__(self) -> None:
+    def __init__(self, scaler: GradScaler) -> None:
         self._train = Metric()
         self._val = Metric()
+        self.scaler = scaler
 
     @abstractmethod
     def __call__(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor: ...
@@ -50,7 +53,7 @@ class Loss(ABC):
 
         if with_grad:
             loss = self._train.tensor / self.accum_steps if self.accum_steps is not None else self._train.tensor
-            loss.backward()
+            self.scaler.scale(loss).backward()
 
         return is_best
 
@@ -69,7 +72,7 @@ class Loss(ABC):
 
 class L1Loss(Loss):
     def __init__(self, **kwargs) -> None:
-        super().__init__()
+        super().__init__(kwargs["scaler"])
         self.loss = torch.nn.L1Loss(kwargs["accum_steps"])
 
     def __str__(self) -> str:
@@ -80,9 +83,9 @@ class L1Loss(Loss):
 
 
 class IOU(Loss):
-    def __init__(self, threshold: float = 0.5) -> None:
-        super().__init__()
-        self.threshold = threshold
+    def __init__(self, **kwargs) -> None:
+        super().__init__(kwargs["scaler"])
+        self.threshold = kwargs["threshold"]
 
     def __str__(self) -> str:
         return "IOU"

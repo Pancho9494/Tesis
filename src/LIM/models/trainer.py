@@ -6,7 +6,7 @@ import multiprocessing as mp
 from LIM.data.structures.cloud import Cloud
 from LIM.data.datasets.datasetI import CloudDatasetsI
 from LIM.data.datasets.scanNet import collate_scannet
-from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise
+from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise, transform_factory
 from LIM.metrics.losses import Loss, L1Loss, IOU
 from aim import Run
 from dataclasses import dataclass, field
@@ -17,8 +17,8 @@ import copy
 import gc
 from functools import partial
 from config import settings
-import numpy as np
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.amp import autocast, GradScaler
 
 
 class Transforms:
@@ -49,6 +49,7 @@ class Trainer:
     transforms: Dict[str, Transforms]
     l1_loss: Loss
     iou_loss: Loss
+    scaler: GradScaler
 
     def __init__(self, tag: str, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         self.tag = tag
@@ -63,13 +64,14 @@ class Trainer:
             T_max=settings.TRAINER.EPOCHS,
             eta_min=1e-4,
         )
-        self.l1_loss = L1Loss(reduction="none", accum_steps=settings.TRAINER.ACCUM_STEPS)
-        self.iou_loss = IOU(threshold=0.5)
+        self.scaler = GradScaler(settings.DEVICE)
+        self.l1_loss = L1Loss(scaler=self.scaler, reduction="none", accum_steps=settings.TRAINER.ACCUM_STEPS)
+        self.iou_loss = IOU(scaler=self.scaler, threshold=0.5)
 
         self.__make_split()
         self.current = Trainer.Current()
-        self.run = Run(experiment="IAE Training")
-        self.run["trainer"] = settings.TRAINER.__dict__
+        # self.run = Run(experiment="IAE Training")
+        # self.run["trainer"] = settings.TRAINER.__dict__
         # self.run["model"] = settings.MODEL.__dict__
 
     def train(self) -> None:
@@ -83,7 +85,7 @@ class Trainer:
             for self.current.step, (cloud, implicit) in enumerate(self.train_loader, self.current.step):
                 self.__train_step(cloud, implicit)
                 self.__val_step()
-                self.__log(show=True)
+                # self.__log(show=True)
                 self.__backup_model(self.model.state_dict(), "latest")
             self.scheduler.step()
             print(f"Current learning rate: {self.scheduler.get_last_lr()}")
@@ -117,9 +119,11 @@ class Trainer:
 
     def __train_step(self, cloud: Cloud, implicit: Cloud) -> None:
         self.model.train()
-        predicted_df = self.model(cloud, implicit)
-        self.l1_loss.train(predicted_df, implicit.features, with_grad=True)
-        self.iou_loss.train(predicted_df, implicit.features)
+
+        with autocast(settings.DEVICE):
+            predicted_df = self.model(cloud, implicit)
+            self.l1_loss.train(predicted_df, implicit.features, with_grad=True)
+            self.iou_loss.train(predicted_df, implicit.features)
 
         accumulation_done = (self.current.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
         on_last_batch = (self.current.step + 1) == len(self.train_loader)
@@ -153,21 +157,15 @@ class Trainer:
 
         print(f"Train split has {len(train_set.indices)} point clouds")
         print(f"Validation split has {len(val_set.indices)} point clouds")
+
         self.train_loader = DataLoader(
             dataset=train_set,
             batch_size=settings.TRAINER.BATCH_SIZE,
             shuffle=True,
             collate_fn=partial(
                 collate_scannet,
-                cloud_tf=[
-                    CenterZRandom(base_ratio=0.5),
-                    Downsample(n_points=4096),
-                    Noise(noise=0.005),
-                ],
-                implicit_tf=[
-                    BreakSymmetry(std_dev=1e-4),
-                    Downsample(n_points=2048),
-                ],
+                cloud_tf=transform_factory(settings.TRAINER.POINTCLOUD_TF.TRAIN),
+                implicit_tf=transform_factory(settings.TRAINER.IMPLICIT_GRID_TF.TRAIN),
             ),
             num_workers=mp.cpu_count() - 4 if settings.TRAINER.MULTIPROCESSING else 0,
             multiprocessing_context="spawn" if settings.TRAINER.MULTIPROCESSING else None,
@@ -180,14 +178,8 @@ class Trainer:
                 shuffle=False,
                 collate_fn=partial(
                     collate_scannet,
-                    cloud_tf=[
-                        CenterZRandom(base_ratio=0.5),
-                        Downsample(n_points=4096),
-                        Noise(noise=0.005),
-                    ],
-                    implicit_tf=[
-                        BreakSymmetry(std_dev=10e-4),
-                    ],
+                    cloud_tf=transform_factory(settings.TRAINER.POINTCLOUD_TF.VALIDATION),
+                    implicit_tf=transform_factory(settings.TRAINER.IMPLICIT_GRID_TF.VALIDATION),
                 ),
                 num_workers=2 if settings.TRAINER.MULTIPROCESSING else 0,
                 multiprocessing_context="spawn" if settings.TRAINER.MULTIPROCESSING else None,
