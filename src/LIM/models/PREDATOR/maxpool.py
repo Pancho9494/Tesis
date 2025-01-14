@@ -20,7 +20,9 @@ class MaxPoolNeighbors(torch.nn.Module):
         print(f"Maxpoolneighbors forward before: {cloud.features.shape}  ", end="")
 
         cloud.features = torch.cat((cloud.features, torch.zeros_like(cloud.features[:1, :])), 0)
+
         neighbors_idxs = cloud.pools.within(sampleDL=..., radius=0.0625)
+
         print(f" using {neighbors_idxs.shape} neighbors  ", end="")
         cloud.features, _ = torch.max(self._gather(cloud.features, neighbors_idxs), dim=1)
         print(f"after: {cloud.features.shape}")

@@ -7,21 +7,22 @@ from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
 class Predator(torch.nn.Module):
     #     Wrapper for the PREDATOR model that follows the ModelI interface
 
-    #     00   'simple',               KPConv
-    #     01   'resnetb',              ResnetB
-    #     02   'resnetb_strided',      ResnetA  Subsample(dl=0.05), Neighbors(r=0.0625)
+    # layer_ind
+    #            00   'simple',               KPConv
+    #   0        01   'resnetb',              ResnetB
+    #            02   'resnetb_strided',      ResnetA  Pools(dl=0.05), Neighbors(r=0.0625)
 
-    #     03   'resnetb',              ResnetB
-    #     04   'resnetb',              ResnetB
-    #     05   'resnetb_strided',      ResnetA  Subsample(dl=0.1),  Neighbors(r=0.125)
+    #            03   'resnetb',              ResnetB
+    #   1        04   'resnetb',              ResnetB
+    #            05   'resnetb_strided',      ResnetA  Pools(dl=0.1),  Neighbors(r=0.125)
 
-    #     06   'resnetb',              ResnetB
-    #     07   'resnetb',              ResnetB
-    #     08   'resnetb_strided',      ResnetA  Subsample(dl=0.2),  Neighbors(r=0.25)
+    #            06   'resnetb',              ResnetB
+    #   2        07   'resnetb',              ResnetB
+    #            08   'resnetb_strided',      ResnetA  Pools(dl=0.2),  Neighbors(r=0.25)
 
-    #     09   'resnetb',              ResnetB
-    #     10   'resnetb',              ResnetB  zeros((0, 1)),      Neighbors(r=0.5)
-    #                                  Conv1D (it's called self.bottle)
+    #            09   'resnetb',              ResnetB
+    #   3        10   'resnetb',              ResnetB  zeros((0, 1)),      Neighbors(r=0.5)
+    #                                     Conv1D (it's called self.bottle)
 
     #     11   'nearest_upsample',
     #     12   'unary',
