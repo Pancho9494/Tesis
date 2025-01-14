@@ -1,43 +1,117 @@
 import numpy as np
 import open3d as o3d
 from pathlib import Path
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Dict
 import torch
 import copy
 import matplotlib as mpl
 from enum import Enum
 from config import settings
+import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
+import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
 
 np.random.seed(42)
 
 
+class Indices:
+    _owner: "Cloud"
+    _indices: Dict[str, torch.Tensor]
+
+    def __init__(self, owner: "Cloud") -> None:
+        self._indices = {}
+        self._owner = owner
+
+
+class Neighbors(Indices):
+    def within(self, radius: float) -> torch.Tensor:
+        """
+        Uses the cpp wrapper function to compute the indices of the neighbors within the given radius, for all points
+        in the point cloud
+
+        As different points will have a different ammount of neighbors, the output of this query creates a vector
+        big enough to fit the max number of neighbors found:
+            [len(self), max_neighbors]
+        For the points that don't have enough neighbors the index placed correspond to len(self) + 1
+        Later, this points get filtered in the KPConv call, as the influence of the points decreases with the distancem
+        a dummy point very far away is concatenated to the point cloud, so all these "fake neighbors" essentialy
+        do nothing
+        """
+        if radius not in self._indices:
+            indices = cpp_neighbors.batch_query(
+                queries=self._owner.tensor,
+                supports=self._owner.tensor,
+                q_batches=torch.tensor([len(self._owner)]),
+                s_batches=torch.tensor([len(self._owner)]),
+                radius=radius,
+            )
+            self._indices[f"{radius}:2.04f"] = torch.from_numpy(indices.astype(np.int64))
+        return self._indices[f"{radius}:2.04f"]
+
+
+class Pools(Indices):
+    def within(self, sampleDL: float, radius: float) -> torch.Tensor:
+        if radius not in self._indices:
+            indices, lengths = cpp_subsampling.subsample_batch(
+                points=self._owner.tensor,
+                batches=torch.tensor([len(self._owner)]),
+                features=None,
+                classes=None,
+                sampleDl=sampleDL,
+                method="barycenters",
+                max_p=0,
+                verbose=0,
+            )
+            indices = cpp_neighbors.batch_query(
+                queries=torch.from_numpy(indices),
+                supports=self._owner.tensor,
+                q_batches=lengths,
+                s_batches=torch.tensor([len(self._owner)]),
+                radius=radius,
+            )
+            self._indices[f"{radius}:2.04f"] = torch.from_numpy(indices.astype(np.int64))
+
+        return self._indices[f"{radius}:2.04f"]
+
+
 class Cloud:
     pcd: o3d.t.geometry.PointCloud
-    _features: torch.Tensor
     device: torch.device = torch.device(settings.DEVICE)
+    neighbors: Neighbors
+    pools: Pools
+
+    _features: torch.Tensor
     __o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
-    path: Optional[Path] = ""
+
+    path: Optional[Path] = None
 
     def __init__(self) -> None:
         self._features = torch.tensor([], device=self.device)
+        self.neighbors = Neighbors(owner=self)
+        self.pools = Pools(owner=self)
 
     def __len__(self) -> int:
         return self.arr.shape[0]
 
     def __str__(self) -> str:
-        return f"Cloud(Path: {self.path} Points{[v for v in self.shape]}, Features{[v for v in self.features.shape]}, {self.device})"
+        out = f"Cloud(Path: {self.path}, Points{[v for v in self.shape]}"
+        out += f"Features{[v for v in self.features.shape]}, Device: {self.device})"
+        return out
 
     @classmethod
-    def from_path(cls, path: Path) -> "Cloud":
+    def from_path(cls, path: Union[Path, str]) -> "Cloud":
+        if isinstance(path, str):
+            path = Path(path)
+
         instance = cls()
-        instance.pcd = o3d.t.geometry.PointCloud()
         if path.suffix.lower() in [".npz", ".npy"]:
-            data = np.load(path)
-            instance.pcd.point.positions = o3d.core.Tensor(
-                list(data.values())[0], o3d.core.float32, o3d.core.Device(cls.__o3ddevice)
-            )
+            instance = cls.from_arr(np.load(path))
+        elif path.suffix.lower() in [".pth"]:
+            instance = cls.from_arr(torch.load(path, weights_only=False))
         else:
+            instance.pcd = o3d.t.geometry.PointCloud()
             instance.pcd = o3d.io.read_point_cloud(str(path))
+
+        instance.path = path
         return instance
 
     @classmethod
@@ -102,15 +176,16 @@ class Cloud:
         else:
             if empty:
                 self._features = torch.ones((self.shape[0], 1)).to(self.device)
-            self._features = self._features.reshape(-1, 1)
+            # self._features = self._features.reshape(-1, 1) # see features setter, this also gets relaxed
 
         return self._features
 
     @features.setter
     def features(self, value: Union[np.ndarray, torch.Tensor]) -> None:
-        assert value.shape[0] == self.shape[0], ValueError(
-            f"features vector {value.shape[0]} must have same size first dimension as pointcloud {self.shape[0]}"
-        )
+        # Relaxing this rule for a bit, when working with PREDATOR and superpoints we get less and less features
+        # assert value.shape[0] == self.shape[0], ValueError(
+        #     f"features vector {value.shape[0]} must have same size first dimension as pointcloud {self.shape[0]}"
+        # )
         if isinstance(value, np.ndarray):
             value = torch.from_numpy(value)
         self._features = value.to(self.device)
@@ -171,9 +246,7 @@ class Cloud:
             instance.pcd.point.normals = o3d.core.Tensor(
                 np.asarray(instance.pcd.point.normals)[idx, :], o3d.core.float32, o3d.core.Device(self.__o3ddevice)
             )
-        except KeyError:
-            pass
-        except IndexError:
+        except (KeyError, IndexError):
             pass
         return instance
 

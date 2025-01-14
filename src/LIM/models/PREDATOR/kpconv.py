@@ -3,9 +3,11 @@ import numpy as np
 import torch
 import open3d as o3d
 from tqdm import tqdm
+from LIM.data.structures.cloud import Cloud
+from abc import ABC, abstractmethod
 
 
-class KPConv(torch.nn.Module):
+class KPConv(torch.nn.Module, ABC):
     in_dim: int
     out_dim: int
     KP_radius: float
@@ -16,11 +18,17 @@ class KPConv(torch.nn.Module):
     root: Path  # Path to the directory where the kernel points are stored / loaded from
 
     def __init__(
-        self, in_dim: int, out_dim: int, KP_radius: float = 0.06, KP_extent: float = 0.05, n_kernel_points: int = 15
+        self,
+        in_dim: int,
+        out_dim: int,
+        KP_radius: float = 0.06,
+        KP_extent: float = 0.05,
+        n_kernel_points: int = 15,
     ) -> None:
         super(KPConv, self).__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
+        self.mode = mode
         self.KP_radius = KP_radius
         self.KP_extent = KP_extent
         self.n_kernel_points = n_kernel_points
@@ -34,22 +42,33 @@ class KPConv(torch.nn.Module):
     def __repr__(self) -> str:
         return f"KPConv(in_dim: {self.in_dim}, out_dim: {self.out_dim}, radius: {self.KP_radius:.2f}, extent: {self.KP_extent:.2f}, n_kernel_points: {self.n_kernel_points})"
 
-    def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        x: torch.Tensor = ...
-        s_pts: torch.Tensor = ...
-        q_pts: torch.Tensor = ...
-        neighbor_idxs: torch.Tensor = ...
+    @abstractmethod
+    def fetch_neighbors(self, cloud: Cloud) -> torch.Tensor: ...
 
-        s_pts = torch.cate((s_pts, torch.zeros_like(s_pts[:1, :] + 1e6)), dim=0)
-        neighbors = s_pts[neighbor_idxs, :] - q_pts.unsqueeze(1)
+    def forward(self, cloud: Cloud) -> Cloud:
+        # print(f"kpconv forward: ({cloud.shape}, {cloud.features.shape})")
+        q_pts = cloud.tensor
+        s_pts = cloud.tensor
+
+        neighbor_idxs = self.fetch_neighbors(cloud)
+        # neighbor_idxs = cloud.neighbors.within(radius=0.0625)
+        # neighbor_idxs = cloud.pools.within(radius=0.0625)
+
+        x = cloud.features
+
+        # add dummy point to filter all indices equal to len(s_pts) + 1
+        s_pts = torch.cat((s_pts, torch.zeros_like(s_pts[:1, :] + 1e6)), dim=0)
+
+        neighbors = s_pts[neighbor_idxs, :]
+        neighbors -= q_pts.unsqueeze(1)
         neighbors = neighbors.unsqueeze(dim=2)
         differences = neighbors - self.kernel_points
         sq_distances = torch.sum(differences**2, dim=3)
         all_weights = torch.clamp(1 - torch.sqrt(sq_distances) / self.KP_extent, min=0.0)
-        all_weights = torch.trranspose(all_weights, 1, 2)
+        all_weights = torch.transpose(all_weights, 1, 2)
 
-        x = torch.cat((x, torch.zeros_like(x[:1, :])), dim=0)
-        neighbors_x = self._gather(x, neighbor_idxs)
+        features = torch.cat((x, torch.zeros_like(x[:1, :])), dim=0)
+        neighbors_x = self._gather(features, neighbor_idxs)
         weighted_features = torch.matmul(all_weights, neighbors_x).permute((1, 0, 2))
 
         kernel_outputs = torch.matmul(weighted_features, self.weights)
@@ -59,8 +78,8 @@ class KPConv(torch.nn.Module):
         neighbor_features_sum = torch.sum(neighbors_x, dim=-1)
         neighbor_num = torch.sum(torch.gt(neighbor_features_sum, 0.0), dim=-1)
         neighbor_num = torch.max(neighbor_num, torch.ones_like(neighbor_num))
-        output_features = output_features / neighbor_num.unsqueeze(1)
-        return output_features
+        cloud.features = output_features / neighbor_num.unsqueeze(1)
+        return cloud
 
     def _gather(self, x: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
         """
@@ -79,14 +98,14 @@ class KPConv(torch.nn.Module):
             new_s[idx + 1] = value
             x = x.expand(new_s)
 
-        n = len(idx.size())
-        for idx, value in enumerate(indices.size()[n:]):
-            idx = idx.unsqueeze(idx + n)
-            new_s = list(idx.size())
+        n = len(indices.size())
+        for idx, value in enumerate(x.size()[n:]):
+            indices = indices.unsqueeze(idx + n)
+            new_s = list(indices.size())
             new_s[idx + n] = value
-            idx = idx.expand(new_s)
+            indices = indices.expand(new_s)
 
-        return x.gather(0, idx)
+        return x.gather(0, indices)
 
     def _load_kernel_points(self) -> None:
         if not self._search_existing_kernel_points():
@@ -188,3 +207,27 @@ class KPConv(torch.nn.Module):
         self.root.mkdir(parents=True, exist_ok=True)
         o3d.io.write_point_cloud(str(self.root / f"k_{self.n_kernel_points:03d}_3D.ply"), pcd)
         return kernel_points
+
+
+class KPConvNeighbors(KPConv):
+    neighbor_radius: float
+
+    def __init__(self, neighbor_radius: float, **kwargs) -> None:
+        super(KPConvNeighbors, self).__init__(**kwargs)
+        self.neighbor_radius = neighbor_radius
+
+    def fetch_neighbors(self, cloud: Cloud) -> torch.Tensor:
+        return cloud.neighbors.within(radius=self.neighbor_radius)
+
+
+class KPConvPools(KPConv):
+    neighbor_radius: float
+    sampleDL: float
+
+    def __init__(self, neighbor_radius: float, sampleDL: float, **kwargs) -> None:
+        super(KPConvPools, self).__init__(**kwargs)
+        self.neighbor_radius = neighbor_radius
+        self.sampleDL = sampleDL
+
+    def fetch_neighbors(self, cloud: Cloud) -> torch.Tensor:
+        return cloud.pools.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)

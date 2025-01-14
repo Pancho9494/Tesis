@@ -4,8 +4,8 @@ import torch
 from torch.utils.data import DataLoader
 import multiprocessing as mp
 from LIM.data.structures.cloud import Cloud
-from LIM.data.datasets.datasetI import CloudDatasetsI
-from LIM.data.datasets.scanNet import collate_scannet
+from LIM.data.sets.datasetI import CloudDatasetsI
+from LIM.data.sets.scanNet import collate_scannet
 from LIM.data.structures.transforms import Downsample, BreakSymmetry, CenterZRandom, Noise, transform_factory
 from LIM.metrics.losses import Loss, L1Loss, IOU
 from aim import Run

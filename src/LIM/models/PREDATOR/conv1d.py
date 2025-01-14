@@ -1,4 +1,5 @@
 import torch
+from LIM.data.structures import Cloud
 
 
 class BatchNorm(torch.nn.Module):
@@ -10,6 +11,7 @@ class BatchNorm(torch.nn.Module):
         self._batch_norm = torch.nn.InstanceNorm1d(in_dim, momentum=momentum)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # print("batchnorm forward")
         x = x.unsqueeze(2).transpose(0, 2)
         x = self._batch_norm(x)
         x = x.transpose(0, 2).squeeze(2)
@@ -24,6 +26,7 @@ class Bias(torch.nn.Module):
         self.in_dim = in_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # print("bias forward")
         return x + torch.nn.parameter.Parameter(torch.zeros(self.in_dim, dtype=torch.float32), requires_grad=True)
 
 
@@ -44,17 +47,20 @@ class Conv1D(torch.nn.Module):
         self.out_dim = out_dim
         self.with_batch_norm = with_batch_norm
         self.with_leaky_relu = with_leaky_relu
-        self.layers = torch.nn.ModuleList(
-            [
-                torch.nn.Linear(in_dim, out_dim, bias=False),
-                BatchNorm(in_dim=out_dim, momentum=...) if with_batch_norm else Bias(in_dim=out_dim),
-                torch.nn.LeakyReLU(negative_slope=0.1) if with_leaky_relu else torch.nn.Identity(),
-            ]
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(in_dim, out_dim, bias=False),
+            BatchNorm(in_dim=out_dim, momentum=0.02) if with_batch_norm else Bias(in_dim=out_dim),
+            torch.nn.LeakyReLU(negative_slope=0.1) if with_leaky_relu else torch.nn.Identity(),
         )
 
     def __repr__(self) -> str:
-        return f"Conv1D(in_dim: {self.in_dim}, out_dim: {self.out_dim}, batch_norm: {self.with_batch_norm}, leaky_relu: {self.with_leaky_relu})"
+        out = f"Conv1D(in_dim: {self.in_dim}, out_dim: {self.out_dim}"
+        out += ", batch_norm" if self.with_batch_norm else ""
+        out += ", leaky_relu" if self.with_leaky_relu else ""
+        out += ")"
+        return out
 
-    def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        x = self.layers(batch)
-        return x
+    def forward(self, cloud: Cloud) -> Cloud:
+        # print(f"conv1d forward: ({cloud.shape}, {cloud.features.shape})")
+        cloud.features = self.layers(cloud.features)
+        return cloud

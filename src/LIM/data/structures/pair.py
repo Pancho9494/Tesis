@@ -1,13 +1,13 @@
 from dataclasses import dataclass, field
 import open3d as o3d
 import numpy as np
-from LIM.data.cloud import Cloud
+from LIM.data.structures import Cloud
 from typing import Union, Optional
 import copy
 
 
 @dataclass
-class Pairs:
+class Pair:
     """
     Utility class that holds cloud pairs, with the transform that aligns them and their overlap
     """
@@ -16,23 +16,25 @@ class Pairs:
     target: Cloud
     # TODO: we should hold both the ground truth transformation and the predicted transformation, or maybe just the GT
     # and we work with predictions just as an argument
-    truth: np.ndarray = field(compare=False, repr=False)  # somehow this is completely wrong???
+    truth: np.ndarray = field(compare=False, repr=False)
     prediction: Union[np.ndarray, None] = field(default=None, compare=False, repr=False)
     _overlap: Optional[float] = field(default=None)
 
     def __repr__(self) -> str:
-        return f"Pair({self.src.path.stem}, {self.target.path.stem})"
-
-    def _compute_overlap(self, transform: np.ndarray) -> float:
-        temp = self.target.pcd
-        temp.transform(transform)
-        return self._get_overlap_ratio(self.src.pcd, temp)
+        out = f"Pair({self.src}, {self.target}"
+        out += f", {self.overlap * 100 :02.2f}%" if self._overlap is not None else ""
+        out += ")"
+        return out
 
     @property
     def overlap(self) -> float:
         if self._overlap is None:
             self._overlap = self.GT_overlap()
         return self._overlap
+
+    @overlap.setter
+    def overlap(self, value: float) -> None:
+        self._overlap = value
 
     def GT_overlap(self) -> float:
         return self._compute_overlap(self.truth)
@@ -70,6 +72,11 @@ class Pairs:
         vis.add_geometry(ground_truth.pcd)
         vis.register_key_callback(ord("A"), _animate_transform)
         vis.run()
+
+    def _compute_overlap(self, transform: np.ndarray) -> float:
+        temp = self.target.pcd
+        temp.transform(transform)
+        return self._get_overlap_ratio(self.src.pcd, temp)
 
     def _get_overlap_ratio(self, source, target, threshold=0.03):
         """

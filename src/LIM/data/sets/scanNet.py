@@ -3,7 +3,7 @@ from pathlib import Path
 import zipfile
 from typing import List, Tuple, Optional
 from LIM.data.structures.cloud import Cloud, collate_cloud
-from LIM.data.datasets.datasetI import CloudDatasetsI
+from LIM.data.sets.datasetI import CloudDatasetsI
 import torchvision
 import torch
 
@@ -53,28 +53,6 @@ class ScanNet(CloudDatasetsI):
 
         print(f"Loaded ScanNet with {len(self)} point clouds")
 
-    async def clean_bad_files(self) -> None:
-        print("Cleaning ScanNet dataset")
-        files_to_check = [file for scene in self.scenes for file in scene.rglob("*.npz")]
-        remove = []
-        with ProcessPoolExecutor() as executor:
-            with tqdm(total=len(files_to_check), desc="Checking files", ncols=100) as progress_bar:
-                for file, badFile in zip(files_to_check, executor.map(check_file, files_to_check)):
-                    if badFile:
-                        remove.append(file)
-                    progress_bar.update(1)
-
-        print(f"Removing {len(remove)} files out of {len(files_to_check)}")
-        for file in remove:
-            idx = file.stem[-2:]
-            (file.parent.parent / f"pointcloud/pointcloud_{idx}.npz").unlink(missing_ok=True)
-            (file.parent.parent / f"points_iou/points_iou_{idx}.npz").unlink(missing_ok=True)
-
-        for scene in self.scenes:
-            if scene.is_dir():
-                if not any((scene / "pointcloud").iterdir()) or not any((scene / "points_iou").iterdir()):
-                    shutil.rmtree(scene)
-
     def __len__(self) -> int:
         return len(self.scenes)
 
@@ -99,6 +77,28 @@ class ScanNet(CloudDatasetsI):
         implicit.features = iou_file["df_value"].astype(np.float32)
         implicit.path = scene / f"points_iou/points_iou_{sub_idx:02d}.npz"
         return cloud, implicit
+
+    async def clean_bad_files(self) -> None:
+        print("Cleaning ScanNet dataset")
+        files_to_check = [file for scene in self.scenes for file in scene.rglob("*.npz")]
+        remove = []
+        with ProcessPoolExecutor() as executor:
+            with tqdm(total=len(files_to_check), desc="Checking files", ncols=100) as progress_bar:
+                for file, badFile in zip(files_to_check, executor.map(check_file, files_to_check)):
+                    if badFile:
+                        remove.append(file)
+                    progress_bar.update(1)
+
+        print(f"Removing {len(remove)} files out of {len(files_to_check)}")
+        for file in remove:
+            idx = file.stem[-2:]
+            (file.parent.parent / f"pointcloud/pointcloud_{idx}.npz").unlink(missing_ok=True)
+            (file.parent.parent / f"points_iou/points_iou_{idx}.npz").unlink(missing_ok=True)
+
+        for scene in self.scenes:
+            if scene.is_dir():
+                if not any((scene / "pointcloud").iterdir()) or not any((scene / "points_iou").iterdir()):
+                    shutil.rmtree(scene)
 
     def set_transforms(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:
         self.cloud_tf = torchvision.transforms.Compose(cloud_tf)
