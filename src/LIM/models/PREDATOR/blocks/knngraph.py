@@ -14,13 +14,10 @@ class KNNGraph(torch.nn.Module):
 
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = cloud.features.squeeze(-1)
-        B, C, N = cloud.shape
-        print(cloud.shape, cloud.features.shape)
+        B, C, N = cloud.features.shape
         dist = self._square_distance(cloud.tensor.transpose(1, 2), cloud.tensor.transpose(1, 2))
-        print(dist.shape)
 
         idx = dist.topk(k=self.knn + 1, dim=-1, largest=False, sorted=True)
-        print(idx)
         idx = idx[1]
         idx = idx[:, :, 1:]
         idx = idx.unsqueeze(1).repeat(1, C, 1, 1)

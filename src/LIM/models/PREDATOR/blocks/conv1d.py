@@ -1,5 +1,6 @@
 import torch
 from LIM.data.structures import Cloud
+from debug.decorators import identify_method
 
 
 class BatchNorm(torch.nn.Module):
@@ -33,6 +34,9 @@ class Bias(torch.nn.Module):
 class Conv1D(torch.nn.Module):
     """
     Called UnaryBlock in the original code
+    
+    TODO: Now this weird name is giving me trouble because we need an actual torch.nn.Conv1d adapter for the 
+    CrossAttention module. For now I'll just name the new one as adapter
 
     """
 
@@ -61,6 +65,31 @@ class Conv1D(torch.nn.Module):
         return out
 
     def forward(self, cloud: Cloud) -> Cloud:
-        # print(f"conv1d forward: ({cloud.shape}, {cloud.features.shape})")
         cloud.features = self.layers(cloud.features)
+        return cloud
+
+
+class Conv1DAdapter(torch.nn.Module):
+    in_channels: int
+    out_channels: int
+    kernel_size: int
+    bias: bool
+    _conv1dAdapter: torch.nn.Module
+    
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, bias: bool = True) -> None:
+        super(Conv1DAdapter, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.bias = bias
+        self._conv1dAdapter = torch.nn.Conv1d(in_channels, out_channels, kernel_size, bias=bias)
+    
+    def __repr__(self) -> str:
+        out = f"Conv1DAdapter(in_channels: {self.in_channels}, out_channels: {self.out_channels}, "
+        out += f"kernel_size: {self.kernel_size}), bias: {self.bias})"
+        return out
+    
+    @identify_method
+    def forward(self, cloud: Cloud) -> Cloud:
+        cloud.features = self._conv1dAdapter(cloud.features)
         return cloud

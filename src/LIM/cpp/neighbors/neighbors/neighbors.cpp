@@ -1,7 +1,7 @@
 #include "neighbors.h"
 
 void brute_neighbors(std::vector<PointXYZ>& queries, std::vector<PointXYZ>& supports, std::vector<int>& neighbors_indices, float radius, int verbose) {
-	int max_count = 0, i0 = 0, i = 0;
+	std::size_t max_count = 0, i0 = 0, i = 0;
 	float radius_squared = radius * radius;
 	std::vector<std::vector<int>> tmp(queries.size());
 
@@ -36,7 +36,7 @@ void brute_neighbors(std::vector<PointXYZ>& queries, std::vector<PointXYZ>& supp
 
 void ordered_neighbors(std::vector<PointXYZ>& queries, std::vector<PointXYZ>& supports, std::vector<int>& neighbors_indices, float radius) {
 	float radius_squared = radius * radius;
-	int max_count = 0, i0 = 0;
+	std::size_t max_count = 0, i0 = 0;
 	std::vector<std::vector<int>> tmp(queries.size());
 	std::vector<std::vector<float>> dists(queries.size());
 
@@ -90,7 +90,7 @@ void batch_ordered_neighbors(std::vector<PointXYZ>& queries,
 	std::vector<std::vector<int>> tmp(queries.size());
 	std::vector<std::vector<float>> dists(queries.size());
 	float radius_squared = radius * radius;
-	int max_count = 0, i0 = 0;
+	std::size_t max_count = 0, i0 = 0;
 	int b = 0, sum_qb = 0, sum_sb = 0;
 	float d2;
 	int i, index;

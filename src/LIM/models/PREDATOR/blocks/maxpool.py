@@ -1,34 +1,35 @@
 import torch
-from enum import Enum
 from LIM.data.structures import Cloud
-
+from debug.decorators import identify_method
 
 class MaxPool(torch.nn.Module):
     def __init__(self) -> None:
         super(MaxPool, self).__init__()
+    
+    def __repr__(self) -> str:
+        return "MaxPool()"
 
+    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = cloud.features.max(dim=-1, keepdim=True)[0]
         return cloud
 
 
 class MaxPoolNeighbors(torch.nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, neighbor_radius: float, sampleDL: float) -> None:
         super(MaxPoolNeighbors, self).__init__()
+        self.neighbor_radius = neighbor_radius
+        self.sampleDL = sampleDL
 
+    # @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
-        print(f"Maxpoolneighbors forward before: {cloud.features.shape}  ", end="")
-
         cloud.features = torch.cat((cloud.features, torch.zeros_like(cloud.features[:1, :])), 0)
-
-        neighbors_idxs = cloud.pools.within(sampleDL=..., radius=0.0625)
-
-        print(f" using {neighbors_idxs.shape} neighbors  ", end="")
+        cloud.layers.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
+        neighbors_idxs = cloud.layers.pools[f"{self.neighbor_radius:2.04f}"]
         cloud.features, _ = torch.max(self._gather(cloud.features, neighbors_idxs), dim=1)
-        print(f"after: {cloud.features.shape}")
-
         return cloud
 
+    # @identify_method
     def _gather(self, x: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
         for idx, value in enumerate(indices.size()[1:]):
             x = x.unsqueeze(idx + 1)

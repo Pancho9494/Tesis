@@ -11,91 +11,139 @@ import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
 
 np.random.seed(42)
+from debug.decorators import identify_method
 
 
-class Indices:
-    _owner: "Cloud"
-    _indices: Dict[str, torch.Tensor]
+class Layers:
+    """
+    This whole layers thing got real ugly real quick
+    But I don't know if making this cleaner is worth my time right now
+    """
+
+    owner: "Cloud"
+    points: Dict[str, torch.Tensor]
+    neighbors: Dict[str, torch.Tensor]
+    pools: Dict[str, torch.Tensor]
 
     def __init__(self, owner: "Cloud") -> None:
-        self._indices = {}
-        self._owner = owner
+        self.owner = owner
+        self.points = {}
+        self.neighbors, self.pools = {}, {}
 
+    ###################################################################################################################
+    ###################################################################################################################
+    # TODO: Instead of having this layers dictionaries, we should instead have a structure similar to a linked list   #
+    #       where a Cloud has a reference to a superpoints cloud, in which we store the points and features of the    #
+    #       next block of the network                                                                                 #
+    ###################################################################################################################
+    ###################################################################################################################
+    
+    def __repr__(self) -> str:
+        return "Layers"
+        
 
-class Neighbors(Indices):
-    def within(self, radius: float) -> torch.Tensor:
+    # @identify_method(nested_level=1)
+    def within(self, radius: float, sampleDL: Optional[float]) -> None:
         """
-        Uses the cpp wrapper function to compute the indices of the neighbors within the given radius, for all points
-        in the point cloud
-
-        As different points will have a different ammount of neighbors, the output of this query creates a vector
-        big enough to fit the max number of neighbors found:
-            [len(self), max_neighbors]
-        For the points that don't have enough neighbors the index placed correspond to len(self) + 1
-        Later, this points get filtered in the KPConv call, as the influence of the points decreases with the distancem
-        a dummy point very far away is concatenated to the point cloud, so all these "fake neighbors" essentialy
-        do nothing
+        TBH I don't really understand what do they mean by 'pools' in the original code
         """
-        if radius not in self._indices:
-            indices = cpp_neighbors.batch_query(
-                queries=self._owner.tensor,
-                supports=self._owner.tensor,
-                q_batches=torch.tensor([len(self._owner)]),
-                s_batches=torch.tensor([len(self._owner)]),
-                radius=radius,
-            )
-            self._indices[f"{radius}:2.04f"] = torch.from_numpy(indices.astype(np.int64))
-        return self._indices[f"{radius}:2.04f"]
 
+        KEY = f"{radius:2.04f}"
+        if f"{radius / 2:2.04f}" not in self.points:
+            self.points[KEY] = self.owner.tensor
 
-class Pools(Indices):
-    def within(self, sampleDL: float, radius: float) -> torch.Tensor:
-        if radius not in self._indices:
-            indices, lengths = cpp_subsampling.subsample_batch(
-                points=self._owner.tensor,
-                batches=torch.tensor([len(self._owner)]),
-                features=None,
-                classes=None,
-                sampleDl=sampleDL,
-                method="barycenters",
-                max_p=0,
-                verbose=0,
-            )
-            indices = cpp_neighbors.batch_query(
-                queries=torch.from_numpy(indices),
-                supports=self._owner.tensor,
-                q_batches=lengths,
-                s_batches=torch.tensor([len(self._owner)]),
-                radius=radius,
-            )
-            self._indices[f"{radius}:2.04f"] = torch.from_numpy(indices.astype(np.int64))
+        if KEY not in self.neighbors:
+            lenghts = torch.tensor([len(self.points[KEY])])
+            done = False
+            while not done:
+                try:
+                    conv_i = cpp_neighbors.batch_query(
+                        queries=self.points[KEY],
+                        supports=self.points[KEY],
+                        q_batches=lenghts,
+                        s_batches=lenghts,
+                        radius=radius,
+                    )
+                    done = True
+                except RuntimeError as e:
+                    continue
+            conv_i = torch.from_numpy(conv_i.astype(np.int64))
+            self.neighbors[KEY] = conv_i
+        else:
+            conv_i = self.neighbors[KEY]
 
-        return self._indices[f"{radius}:2.04f"]
+        if KEY not in self.pools:
+            if sampleDL is not None:
+                done = False
+                while not done:
+                    try:
+                        pool_p, pool_b = cpp_subsampling.subsample_batch(
+                            points=self.points[KEY],
+                            batches=torch.tensor([len(self.points[KEY])], dtype=torch.int32),
+                            sampleDl=sampleDL,
+                            max_p=0,
+                            verbose=0,
+                        )
+                        done = True
+                    except RuntimeError as e:
+                        continue
+                pool_p, pool_b = torch.from_numpy(pool_p), torch.from_numpy(pool_b)
+                self.points[f"{2 * radius:2.04f}"] = pool_p
+
+                done = False
+                while not done:
+                    try:
+                        pool_i = cpp_neighbors.batch_query(
+                            queries=pool_p,
+                            supports=self.points[KEY],
+                            q_batches=pool_b,
+                            s_batches=torch.tensor([len(self.points[KEY])]),
+                            radius=radius,
+                        )
+                        done = True
+                    except RuntimeError as e:
+                        continue
+                pool_i = torch.from_numpy(pool_i.astype(np.int64))
+                self.pools[KEY] = pool_i
+
+            else:
+                pool_i = torch.zeros((0, 1), dtype=torch.int64)
+                pool_p = torch.zeros((0, 3), dtype=torch.float32)
+                pool_b = torch.zeros((0,), dtype=torch.int64)
+                self.pools[KEY] = pool_i
+
+        else:
+            pool_i = self.pools[KEY]
+        
+        return
 
 
 class Cloud:
     pcd: o3d.t.geometry.PointCloud
-    device: torch.device = torch.device(settings.DEVICE)
-    neighbors: Neighbors
-    pools: Pools
-
+    layers: Layers
     _features: torch.Tensor
-    __o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
-
     path: Optional[Path] = None
+
+    device: torch.device = torch.device(settings.DEVICE)
+    __o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
 
     def __init__(self) -> None:
         self._features = torch.tensor([], device=self.device)
-        self.neighbors = Neighbors(owner=self)
-        self.pools = Pools(owner=self)
+        self.layers = Layers(owner=self)
 
     def __len__(self) -> int:
         return self.arr.shape[0]
 
-    def __str__(self) -> str:
-        out = f"Cloud(Path: {self.path}, Points{[v for v in self.shape]}"
-        out += f"Features{[v for v in self.features.shape]}, Device: {self.device})"
+    def __repr__(self) -> str:
+        out = f"Cloud(Points{[v for v in self.shape]}"
+        out += f", Features{[v for v in self.features.shape]}, Device: {self.device})"
         return out
+    
+    def __copy__(self) -> "Cloud":
+        cls = self.__class__.from_tensor(self.tensor.clone())
+        cls.features = self.features.clone()
+        cls.layers = self.layers
+        return cls
 
     @classmethod
     def from_path(cls, path: Union[Path, str]) -> "Cloud":

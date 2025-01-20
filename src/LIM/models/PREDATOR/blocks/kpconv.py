@@ -5,7 +5,8 @@ import open3d as o3d
 from tqdm import tqdm
 from LIM.data.structures.cloud import Cloud
 from abc import ABC, abstractmethod
-
+from typing import Optional, Tuple
+from debug.decorators import identify_method
 
 class KPConv(torch.nn.Module, ABC):
     in_dim: int
@@ -28,7 +29,6 @@ class KPConv(torch.nn.Module, ABC):
         super(KPConv, self).__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
-        self.mode = mode
         self.KP_radius = KP_radius
         self.KP_extent = KP_extent
         self.n_kernel_points = n_kernel_points
@@ -43,16 +43,11 @@ class KPConv(torch.nn.Module, ABC):
         return f"KPConv(in_dim: {self.in_dim}, out_dim: {self.out_dim}, radius: {self.KP_radius:.2f}, extent: {self.KP_extent:.2f}, n_kernel_points: {self.n_kernel_points})"
 
     @abstractmethod
-    def fetch_neighbors(self, cloud: Cloud) -> torch.Tensor: ...
+    def fetch(self, cloud: Cloud, max_neighbors: Optional[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
+    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
-        # print(f"kpconv forward: ({cloud.shape}, {cloud.features.shape})")
-        q_pts = cloud.tensor
-        s_pts = cloud.tensor
-
-        neighbor_idxs = self.fetch_neighbors(cloud)
-        # neighbor_idxs = cloud.neighbors.within(radius=0.0625)
-        # neighbor_idxs = cloud.pools.within(radius=0.0625)
+        q_pts, s_pts, neighbor_idxs = self.fetch(cloud)
 
         x = cloud.features
 
@@ -92,7 +87,8 @@ class KPConv(torch.nn.Module, ABC):
         Returns:
             torch.Tensor: ...
         """
-        for idx, value in enumerate(indices.size()[1:]):
+        ss = indices.size()
+        for idx, value in enumerate(ss[1:]):
             x = x.unsqueeze(idx + 1)
             new_s = list(x.size())
             new_s[idx + 1] = value
@@ -211,13 +207,22 @@ class KPConv(torch.nn.Module, ABC):
 
 class KPConvNeighbors(KPConv):
     neighbor_radius: float
+    sampleDL: float
 
-    def __init__(self, neighbor_radius: float, **kwargs) -> None:
+    def __init__(self, neighbor_radius: float, sampleDL: float, **kwargs) -> None:
         super(KPConvNeighbors, self).__init__(**kwargs)
         self.neighbor_radius = neighbor_radius
+        self.sampleDL = sampleDL
 
-    def fetch_neighbors(self, cloud: Cloud) -> torch.Tensor:
-        return cloud.neighbors.within(radius=self.neighbor_radius)
+    def fetch(self, cloud: Cloud) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        cloud.layers.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
+        if self.sampleDL is not None:
+            cloud.layers.within(sampleDL=2 * self.sampleDL, radius=2 * self.neighbor_radius)
+
+        q_pts = cloud.layers.points[f"{self.neighbor_radius:2.04f}"]
+        s_pts = cloud.layers.points[f"{self.neighbor_radius:2.04f}"]
+        neighbors = cloud.layers.neighbors[f"{self.neighbor_radius:2.04f}"]
+        return q_pts, s_pts, neighbors
 
 
 class KPConvPools(KPConv):
@@ -229,5 +234,11 @@ class KPConvPools(KPConv):
         self.neighbor_radius = neighbor_radius
         self.sampleDL = sampleDL
 
-    def fetch_neighbors(self, cloud: Cloud) -> torch.Tensor:
-        return cloud.pools.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
+    def fetch(self, cloud: Cloud) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        cloud.layers.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
+        cloud.layers.within(sampleDL=2 * self.sampleDL, radius=2 * self.neighbor_radius)
+
+        q_pts = cloud.layers.points[f"{2 * self.neighbor_radius:2.04f}"]
+        s_pts = cloud.layers.points[f"{self.neighbor_radius:2.04f}"]
+        pools = cloud.layers.pools[f"{self.neighbor_radius:2.04f}"]
+        return q_pts, s_pts, pools

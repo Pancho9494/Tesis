@@ -1,8 +1,8 @@
 import torch
 from typing import List
 from LIM.data.structures.cloud import Cloud
-from LIM.models.PREDATOR import Conv1D
-from LIM.models.PREDATOR.nearestupsample import NearestUpsample
+from LIM.models.PREDATOR.blocks import Conv1D
+from LIM.models.PREDATOR.blocks.nearestupsample import NearestUpsample
 
 
 class Decoder(torch.nn.Module):
