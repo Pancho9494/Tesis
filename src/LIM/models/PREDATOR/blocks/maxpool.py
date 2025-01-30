@@ -16,17 +16,13 @@ class MaxPool(torch.nn.Module):
 
 
 class MaxPoolNeighbors(torch.nn.Module):
-    def __init__(self, neighbor_radius: float, sampleDL: float) -> None:
+    def __init__(self) -> None:
         super(MaxPoolNeighbors, self).__init__()
-        self.neighbor_radius = neighbor_radius
-        self.sampleDL = sampleDL
 
     # @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = torch.cat((cloud.features, torch.zeros_like(cloud.features[:1, :])), 0)
-        cloud.layers.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
-        neighbors_idxs = cloud.layers.pools[f"{self.neighbor_radius:2.04f}"]
-        cloud.features, _ = torch.max(self._gather(cloud.features, neighbors_idxs), dim=1)
+        cloud.features, _ = torch.max(self._gather(cloud.features, cloud.pools), dim=1)
         return cloud
 
     # @identify_method

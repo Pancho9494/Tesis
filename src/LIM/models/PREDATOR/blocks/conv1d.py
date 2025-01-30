@@ -1,6 +1,7 @@
 import torch
 from LIM.data.structures import Cloud
 from debug.decorators import identify_method
+from config import settings
 
 
 class BatchNorm(torch.nn.Module):
@@ -12,7 +13,6 @@ class BatchNorm(torch.nn.Module):
         self._batch_norm = torch.nn.InstanceNorm1d(in_dim, momentum=momentum)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # print("batchnorm forward")
         x = x.unsqueeze(2).transpose(0, 2)
         x = self._batch_norm(x)
         x = x.transpose(0, 2).squeeze(2)
@@ -21,21 +21,23 @@ class BatchNorm(torch.nn.Module):
 
 class Bias(torch.nn.Module):
     in_dim: int
+    device: torch.device = torch.device(settings.DEVICE)
 
     def __init__(self, in_dim: int) -> None:
         super(Bias, self).__init__()
         self.in_dim = in_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # print("bias forward")
-        return x + torch.nn.parameter.Parameter(torch.zeros(self.in_dim, dtype=torch.float32), requires_grad=True)
+        return x + torch.nn.parameter.Parameter(
+            torch.zeros(self.in_dim, dtype=torch.float32, device=self.device), requires_grad=True
+        )
 
 
 class Conv1D(torch.nn.Module):
     """
     Called UnaryBlock in the original code
-    
-    TODO: Now this weird name is giving me trouble because we need an actual torch.nn.Conv1d adapter for the 
+
+    TODO: Now this weird name is giving me trouble because we need an actual torch.nn.Conv1d adapter for the
     CrossAttention module. For now I'll just name the new one as adapter
 
     """
@@ -64,6 +66,7 @@ class Conv1D(torch.nn.Module):
         out += ")"
         return out
 
+    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self.layers(cloud.features)
         return cloud
@@ -75,7 +78,7 @@ class Conv1DAdapter(torch.nn.Module):
     kernel_size: int
     bias: bool
     _conv1dAdapter: torch.nn.Module
-    
+
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, bias: bool = True) -> None:
         super(Conv1DAdapter, self).__init__()
         self.in_channels = in_channels
@@ -83,12 +86,12 @@ class Conv1DAdapter(torch.nn.Module):
         self.kernel_size = kernel_size
         self.bias = bias
         self._conv1dAdapter = torch.nn.Conv1d(in_channels, out_channels, kernel_size, bias=bias)
-    
+
     def __repr__(self) -> str:
         out = f"Conv1DAdapter(in_channels: {self.in_channels}, out_channels: {self.out_channels}, "
         out += f"kernel_size: {self.kernel_size}), bias: {self.bias})"
         return out
-    
+
     @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self._conv1dAdapter(cloud.features)

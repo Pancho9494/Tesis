@@ -1,7 +1,7 @@
 import numpy as np
 from pathlib import Path
 import zipfile
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from LIM.data.structures.cloud import Cloud, collate_cloud
 from LIM.data.sets.datasetI import CloudDatasetsI
 import torchvision
@@ -103,6 +103,10 @@ class ScanNet(CloudDatasetsI):
     def set_transforms(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:
         self.cloud_tf = torchvision.transforms.Compose(cloud_tf)
         self.implicit_tf = torchvision.transforms.Compose(implicit_tf)
+
+    @property
+    def collate_fn(self) -> Callable:
+        return collate_scannet
 
 
 def collate_scannet(

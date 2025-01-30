@@ -1,94 +1,157 @@
-from dataclasses import dataclass, field
 import open3d as o3d
 import numpy as np
 from LIM.data.structures import Cloud
-from typing import Union, Optional
-import copy
+from typing import Optional, Iterable, Tuple
+import torch
+from debug.decorators import identify_method
+from config import settings
 
 
-@dataclass
+class Overlaps:
+    src: torch.Tensor
+    target: torch.Tensor
+    device: torch.device = torch.device(settings.DEVICE)
+
+    def __init__(self) -> None:
+        self.src = torch.tensor([], device=self.device, requires_grad=False)
+        self.target = torch.tensor([], device=self.device, requires_grad=False)
+
+
+class Saliencies:
+    src: torch.Tensor
+    target: torch.Tensor
+    device: torch.device = torch.device(settings.DEVICE)
+
+    def __init__(self) -> None:
+        self.src = torch.tensor([], device=self.device, requires_grad=False)
+        self.target = torch.tensor([], device=self.device, requires_grad=False)
+
+
+class Correspondences:
+    matrix: torch.Tensor
+    _source_indices: Optional[torch.Tensor] = None
+    _target_indices: Optional[torch.Tensor] = None
+
+    def __init__(self, matrix: torch.Tensor) -> None:
+        self.matrix = matrix
+
+    @property
+    def source_indices(self) -> torch.Tensor:
+        if self._source_indices is None:
+            self._source_indices = self.matrix[:, 0].unique().long()
+        return self._source_indices
+
+    @property
+    def target_indices(self) -> torch.Tensor:
+        if self._target_indices is None:
+            self._target_indices = self.matrix[:, 1].unique().long()
+        return self._target_indices
+
+
 class Pair:
     """
     Utility class that holds cloud pairs, with the transform that aligns them and their overlap
     """
 
-    src: Cloud
-    target: Cloud
-    # TODO: we should hold both the ground truth transformation and the predicted transformation, or maybe just the GT
-    # and we work with predictions just as an argument
-    truth: np.ndarray = field(compare=False, repr=False)
-    prediction: Union[np.ndarray, None] = field(default=None, compare=False, repr=False)
-    _overlap: Optional[float] = field(default=None)
+    _source: Cloud
+    _target: Cloud
+    overlaps: Overlaps
+    saliencies: Saliencies
+    _correspondences: Optional[Correspondences] = None
+    GT_tf_matrix: Optional[np.ndarray] = None
+    prediction: Optional[np.ndarray] = None
+    _overlap: Optional[float] = None
+    device: torch.device = torch.device(settings.DEVICE)
+
+    def __init__(self, source: Cloud, target: Cloud, GT_tf_matrix: Optional[np.ndarray] = None) -> None:
+        self._source = source
+        self._target = target
+        self.overlaps = Overlaps()
+        self.saliencies = Saliencies()
+        if GT_tf_matrix is not None:
+            self.GT_tf_matrix = GT_tf_matrix
+
+    @property
+    def source(self) -> Cloud:
+        return self._source
+
+    @source.setter
+    def source(self, value: Cloud) -> None:
+        sigmoid = torch.nn.Sigmoid()
+
+        HAS_SUPERPOINTS = value.superpoints is not None
+        NO_SUBPOINTS = value.subpoints is None
+        NON_EMPTY_FEATURES = len(value.features) > 0
+        if _PREDATOR_LAST_LAYER := HAS_SUPERPOINTS and NO_SUBPOINTS and NON_EMPTY_FEATURES:
+            with torch.no_grad():
+                self.overlaps.src = torch.nan_to_num(
+                    torch.clamp(sigmoid(value.features[:, -2]), min=0, max=1),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+                self.saliencies.src = torch.nan_to_num(
+                    torch.clamp(sigmoid(value.features[:, -1]), min=0, max=1),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+            value.features = torch.nn.functional.normalize(value.features[:, :-2], p=2, dim=1)
+        self._source = value
+
+    @property
+    def target(self) -> Cloud:
+        return self._target
+
+    @target.setter
+    def target(self, value: Cloud) -> None:
+        sigmoid = torch.nn.Sigmoid()
+
+        HAS_SUPERPOINTS = value.superpoints is not None
+        NO_SUBPOINTS = value.subpoints is None
+        NON_EMPTY_FEATURES = len(value.features) > 0
+        if _PREDATOR_LAST_LAYER := HAS_SUPERPOINTS and NO_SUBPOINTS and NON_EMPTY_FEATURES:
+            with torch.no_grad():
+                self.overlaps.target = torch.nan_to_num(
+                    torch.clamp(sigmoid(value.features[:, -2]), min=0, max=1),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+                self.saliencies.target = torch.nan_to_num(
+                    torch.clamp(sigmoid(value.features[:, -1]), min=0, max=1),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+            value.features = torch.nn.functional.normalize(value.features[:, :-2], p=2, dim=1)
+        self._target = value
 
     def __repr__(self) -> str:
-        out = f"Pair({self.src}, {self.target}"
-        out += f", {self.overlap * 100 :02.2f}%" if self._overlap is not None else ""
+        out = f"Pair({self.source}, {self.target}"
+        out += f", {self.overlap * 100:02.2f}%" if self._overlap is not None else ""
         out += ")"
         return out
 
+    def __iter__(self) -> Iterable[Tuple[Cloud, Cloud]]:
+        return iter((self.source, self.target))
+
     @property
-    def overlap(self) -> float:
-        if self._overlap is None:
-            self._overlap = self.GT_overlap()
-        return self._overlap
+    def correspondences(self) -> Correspondences:
+        if self._correspondences is not None:
+            return self._correspondences
 
-    @overlap.setter
-    def overlap(self, value: float) -> None:
-        self._overlap = value
+        SEARCH_VOXEL_SIZE = 0.0375
+        temp_source = self.source.pcd.to_legacy()
+        temp_source.transform(self.GT_tf_matrix)
+        # print(self.GT_tf_matrix)
+        foo = self.target.pcd.to_legacy()
+        pcd_tree = o3d.geometry.KDTreeFlann(foo)
+        correspondences = []
+        for i, point in enumerate(temp_source.points):
+            [count, indices, _] = pcd_tree.search_radius_vector_3d(point, SEARCH_VOXEL_SIZE)
+            for j in indices:
+                correspondences.append([i, j])
 
-    def GT_overlap(self) -> float:
-        return self._compute_overlap(self.truth)
-
-    def pred_overlap(self) -> float:
-        if self.prediction is None:
-            return 0.0
-        return self._compute_overlap(self.prediction)
-
-    def show(self, num_steps: int = 1) -> None:
-        def _animate_transform(vis) -> None:
-            nonlocal prediction
-            for i in range(num_steps + 1):
-                alpha = i / num_steps
-                intermediate_matrix = (1 - alpha) * np.eye(4) + alpha * self.prediction
-                prediction.pcd.transform(intermediate_matrix)
-                vis.update_geometry(prediction.pcd)
-                vis.poll_events()
-                vis.update_renderer()
-                prediction.pcd.transform(np.linalg.inv(intermediate_matrix))
-
-        self.src.paint([1, 0.706, 0])
-
-        ground_truth = copy.deepcopy(self.target)
-        ground_truth.paint([1, 0, 0])
-        ground_truth.pcd.transform(self.truth)
-
-        prediction = copy.deepcopy(self.target)
-        prediction.paint([0, 0.651, 0.929])
-
-        vis = o3d.visualization.VisualizerWithKeyCallback()
-        vis.create_window()
-        vis.add_geometry(self.src.pcd)
-        vis.add_geometry(prediction.pcd)
-        vis.add_geometry(ground_truth.pcd)
-        vis.register_key_callback(ord("A"), _animate_transform)
-        vis.run()
-
-    def _compute_overlap(self, transform: np.ndarray) -> float:
-        temp = self.target.pcd
-        temp.transform(transform)
-        return self._get_overlap_ratio(self.src.pcd, temp)
-
-    def _get_overlap_ratio(self, source, target, threshold=0.03):
-        """
-        We compute overlap ratio from source point cloud to target point cloud
-        """
-        pcd_tree = o3d.geometry.KDTreeFlann(target)
-
-        match_count = 0
-        for i, point in enumerate(source.points):
-            [count, _, _] = pcd_tree.search_radius_vector_3d(point, threshold)
-            if count != 0:
-                match_count += 1
-
-        overlap_ratio = match_count / len(source.points)
-        return overlap_ratio
+        self._correspondences = Correspondences(torch.tensor(correspondences, device=self.device))
+        return self._correspondences

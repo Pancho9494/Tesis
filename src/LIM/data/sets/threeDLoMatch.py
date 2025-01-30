@@ -2,7 +2,7 @@ import torch
 import torchvision
 from pathlib import Path
 from torch.utils.data import Dataset
-from typing import List, Optional
+from typing import List, Optional, Callable
 import pickle
 import numpy as np
 from LIM.data.structures.cloud import Cloud, collate_cloud
@@ -26,7 +26,7 @@ class ThreeDLoMatch(Dataset):
     overlap_paths: List[Path]
 
     def __init__(self) -> None:
-        self.dir = Path("./data/3DLoMatch/")
+        self.dir = Path("./src/LIM/data/raw/3DLoMatch/")
         file = "train_info"
         with open(self.dir / f"{file}.pkl", "rb") as f:
             info = pickle.load(f)
@@ -58,20 +58,32 @@ class ThreeDLoMatch(Dataset):
         ground_truth[:3, 3] = self.trans_paths[idx].flatten()
         overlap = self.overlap_paths[idx]
 
-        pair = Pair(src=src, target=target, truth=ground_truth)
+        pair = Pair(source=src, target=target, GT_tf_matrix=ground_truth)
         pair.overlap = overlap
+        pair.correspondences
         return pair
+
+    @property
+    def collate_fn(self) -> Callable:
+        return collate_3dmatch
 
 
 def collate_3dmatch(batch: List[Pair], tf_pipeline: Optional[List[torch.nn.Module]]) -> Pair:
-    sources, targets = [], []
+    sources, targets, GT_tf_matrices = [], [], []
     for pair in batch:
-        sources.append(pair.src)
+        sources.append(pair.source)
         targets.append(pair.target)
+        GT_tf_matrices.append(pair.GT_tf_matrix)
 
     source_batch, target_batch = collate_cloud(sources), collate_cloud(targets)
+    GT_tf_batch = np.concatenate([np.expand_dims(arr, axis=0) for arr in GT_tf_matrices], axis=0)
+
     if tf_pipeline is not None:
         tf = torchvision.transforms.Compose(tf_pipeline)
         source_batch, target_batch = tf(source_batch), tf(target_batch)
 
-    return Pair(src=source_batch, target=target_batch, truth=...)
+    source_batch.tensor = source_batch.tensor.reshape(-1, 3)
+    source_batch.features = source_batch.features.reshape(-1, 1)
+    target_batch.tensor = target_batch.tensor.reshape(-1, 3)
+    target_batch.features = target_batch.features.reshape(-1, 1)
+    return Pair(source=source_batch, target=target_batch, GT_tf_matrix=np.squeeze(GT_tf_batch, axis=0))

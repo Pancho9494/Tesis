@@ -22,7 +22,7 @@ services:
       - "..:/dockerx/LIM"
       - "/tmp/.X11-unix:/tmp/.X11-unix"  # Share the X11 socket with the container
       - type: bind
-        source: /home/fmolina/code/Tesis/data
+        source: /home/fmolina/code/Tesis/src/LIM/data/raw
         target: /dockerx/LIM/data/
     working_dir: "/dockerx/LIM"
     entrypoint: "/bin/bash"

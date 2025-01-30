@@ -1,7 +1,7 @@
 import numpy as np
 import open3d as o3d
 from pathlib import Path
-from typing import Union, List, Tuple, Optional, Dict
+from typing import Union, List, Tuple, Optional
 import torch
 import copy
 import matplotlib as mpl
@@ -14,135 +14,40 @@ np.random.seed(42)
 from debug.decorators import identify_method
 
 
-class Layers:
-    """
-    This whole layers thing got real ugly real quick
-    But I don't know if making this cleaner is worth my time right now
-    """
-
-    owner: "Cloud"
-    points: Dict[str, torch.Tensor]
-    neighbors: Dict[str, torch.Tensor]
-    pools: Dict[str, torch.Tensor]
-
-    def __init__(self, owner: "Cloud") -> None:
-        self.owner = owner
-        self.points = {}
-        self.neighbors, self.pools = {}, {}
-
-    ###################################################################################################################
-    ###################################################################################################################
-    # TODO: Instead of having this layers dictionaries, we should instead have a structure similar to a linked list   #
-    #       where a Cloud has a reference to a superpoints cloud, in which we store the points and features of the    #
-    #       next block of the network                                                                                 #
-    ###################################################################################################################
-    ###################################################################################################################
-    
-    def __repr__(self) -> str:
-        return "Layers"
-        
-
-    # @identify_method(nested_level=1)
-    def within(self, radius: float, sampleDL: Optional[float]) -> None:
-        """
-        TBH I don't really understand what do they mean by 'pools' in the original code
-        """
-
-        KEY = f"{radius:2.04f}"
-        if f"{radius / 2:2.04f}" not in self.points:
-            self.points[KEY] = self.owner.tensor
-
-        if KEY not in self.neighbors:
-            lenghts = torch.tensor([len(self.points[KEY])])
-            done = False
-            while not done:
-                try:
-                    conv_i = cpp_neighbors.batch_query(
-                        queries=self.points[KEY],
-                        supports=self.points[KEY],
-                        q_batches=lenghts,
-                        s_batches=lenghts,
-                        radius=radius,
-                    )
-                    done = True
-                except RuntimeError as e:
-                    continue
-            conv_i = torch.from_numpy(conv_i.astype(np.int64))
-            self.neighbors[KEY] = conv_i
-        else:
-            conv_i = self.neighbors[KEY]
-
-        if KEY not in self.pools:
-            if sampleDL is not None:
-                done = False
-                while not done:
-                    try:
-                        pool_p, pool_b = cpp_subsampling.subsample_batch(
-                            points=self.points[KEY],
-                            batches=torch.tensor([len(self.points[KEY])], dtype=torch.int32),
-                            sampleDl=sampleDL,
-                            max_p=0,
-                            verbose=0,
-                        )
-                        done = True
-                    except RuntimeError as e:
-                        continue
-                pool_p, pool_b = torch.from_numpy(pool_p), torch.from_numpy(pool_b)
-                self.points[f"{2 * radius:2.04f}"] = pool_p
-
-                done = False
-                while not done:
-                    try:
-                        pool_i = cpp_neighbors.batch_query(
-                            queries=pool_p,
-                            supports=self.points[KEY],
-                            q_batches=pool_b,
-                            s_batches=torch.tensor([len(self.points[KEY])]),
-                            radius=radius,
-                        )
-                        done = True
-                    except RuntimeError as e:
-                        continue
-                pool_i = torch.from_numpy(pool_i.astype(np.int64))
-                self.pools[KEY] = pool_i
-
-            else:
-                pool_i = torch.zeros((0, 1), dtype=torch.int64)
-                pool_p = torch.zeros((0, 3), dtype=torch.float32)
-                pool_b = torch.zeros((0,), dtype=torch.int64)
-                self.pools[KEY] = pool_i
-
-        else:
-            pool_i = self.pools[KEY]
-        
-        return
-
-
 class Cloud:
     pcd: o3d.t.geometry.PointCloud
-    layers: Layers
     _features: torch.Tensor
+    neighbors: torch.Tensor
+    pools: torch.Tensor
+    upsamples: torch.Tensor
+    device: torch.device = torch.device(settings.DEVICE)
+    o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
+
+    subpoints: Optional["Cloud"] = None
+    superpoints: Optional["Cloud"] = None
     path: Optional[Path] = None
 
-    device: torch.device = torch.device(settings.DEVICE)
-    __o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
-
     def __init__(self) -> None:
-        self._features = torch.tensor([], device=self.device)
-        self.layers = Layers(owner=self)
+        self._features = torch.tensor([], device=self.device, requires_grad=False)
 
     def __len__(self) -> int:
         return self.arr.shape[0]
 
     def __repr__(self) -> str:
         out = f"Cloud(Points{[v for v in self.shape]}"
-        out += f", Features{[v for v in self.features.shape]}, Device: {self.device})"
+        out += f", Features{[v for v in self.features.shape]}, {self.device}"
+        out += ")"
         return out
-    
+
     def __copy__(self) -> "Cloud":
         cls = self.__class__.from_tensor(self.tensor.clone())
         cls.features = self.features.clone()
-        cls.layers = self.layers
+        cls.subpoints = self.subpoints
+        cls.superpoints = self.superpoints
+
+        cls.neighbors = self.neighbors
+        cls.pools = self.pools
+        cls.upsamples = self.upsamples
         return cls
 
     @classmethod
@@ -175,23 +80,18 @@ class Cloud:
         instance.pcd.point.positions = o3d.core.Tensor(
             arr[~np.isnan(arr).any(axis=1)].astype("float32"),  # filter nan points
             o3d.core.float32,
-            o3d.core.Device(cls.__o3ddevice),
+            o3d.core.Device(cls.o3ddevice),
         )
         return instance
 
     @classmethod
     def from_tensor(cls, tens: torch.Tensor) -> "Cloud":
         instance = cls()
-        instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.__o3ddevice))
-        tens = torch.nan_to_num(tens, 0.0)
-        # B, N, D = tens.shape
-        # tens_reshaped = tens.reshape(B * N, D)
-        # mask = ~torch.any(tens_reshaped.isnan(), dim=1)
-        # tens = tens_reshaped[mask]
+        instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.o3ddevice))
         instance.pcd.point.positions = o3d.core.Tensor(
-            tens.cpu().numpy(),
+            torch.nan_to_num(tens, 0.0).cpu().numpy(),
             o3d.core.Dtype.Float32,
-            o3d.core.Device(cls.__o3ddevice),
+            o3d.core.Device(cls.o3ddevice),
         )
         return instance
 
@@ -215,28 +115,106 @@ class Cloud:
 
     @property
     def features(self) -> torch.Tensor:
-        # TODO: this method is ugly
-        empty: bool = len(self._features) == 0
+        if not (_EMPTY := len(self._features) == 0):
+            return self._features
 
         if len(self.shape) == 3:
-            if empty:
-                self._features = torch.ones((self.shape[0], self.shape[1], 1)).to(self.device)
+            self._features = torch.ones((self.shape[0], self.shape[1], 1))
         else:
-            if empty:
-                self._features = torch.ones((self.shape[0], 1)).to(self.device)
-            # self._features = self._features.reshape(-1, 1) # see features setter, this also gets relaxed
+            self._features = torch.ones((self.shape[0], 1))
 
-        return self._features
+        return self._features.to(self.device)
 
     @features.setter
     def features(self, value: Union[np.ndarray, torch.Tensor]) -> None:
-        # Relaxing this rule for a bit, when working with PREDATOR and superpoints we get less and less features
-        # assert value.shape[0] == self.shape[0], ValueError(
-        #     f"features vector {value.shape[0]} must have same size first dimension as pointcloud {self.shape[0]}"
-        # )
         if isinstance(value, np.ndarray):
             value = torch.from_numpy(value)
         self._features = value.to(self.device)
+
+    def show_forwards(self) -> str:
+        current = self
+        points = []
+        features = []
+
+        traveled_layers = 1
+        while current is not None:
+            points.append(current.tensor.shape)
+            features.append(current.features.shape)
+            current = current.superpoints
+
+        space = " " * len("points:\t\t") + " " * (len("torch.Size([12345, 3]), ") * traveled_layers)
+        out = f"\n{space}current layer\n"
+        out += f"{space}v\n"
+        out += f"points:\t\t{points}"
+        out += f"\nfeatures:\t{features}"
+        return out
+
+    def show_backwards(self) -> str:
+        current = self
+        points = []
+        features = []
+
+        traveled_layers = 0
+        while current is not None:
+            points.append(current.tensor.shape)
+            features.append(current.features.shape)
+            current = current.subpoints
+            traveled_layers += 1
+
+        space = " " * len("points:\t\t") + " " * (len("torch.Size([12345, 3]") * traveled_layers)
+        out = f"\n{space}current layer\n"
+        out += f"{space}v\n"
+        out += f"points:\t\t{list(reversed(points))}"
+        out += f"\nfeatures:\t{list(reversed(features))}"
+        return out
+
+    # @identify_method
+    def compute_neighbors(self, radius: float, sampleDL: Optional[float]) -> None:
+        if self.superpoints is not None:
+            return
+
+        numpy_tensor = self.tensor.cpu().detach().numpy()
+        self.neighbors = cpp_neighbors.batch_query(  # conv_i
+            queries=numpy_tensor,
+            supports=numpy_tensor,
+            q_batches=(length := torch.tensor([len(numpy_tensor)])),
+            s_batches=length,
+        )
+        self.neighbors = torch.from_numpy(self.neighbors.astype(np.int64)).to(self.device)
+
+        if sampleDL is not None:
+            subsampled, subsampled_len = cpp_subsampling.subsample_batch(  # pool_p, pool_b
+                points=numpy_tensor,
+                batches=length.to(dtype=torch.int32),
+                sampleDl=sampleDL,
+                max_p=0,
+                verbose=0,
+            )
+            subsampled, subsampled_len = torch.from_numpy(subsampled), torch.from_numpy(subsampled_len)
+
+            self.pools = cpp_neighbors.batch_query(  # pool_i
+                queries=subsampled,
+                supports=numpy_tensor,
+                q_batches=subsampled_len,
+                s_batches=length,
+                radius=radius,
+            )
+            self.pools = torch.from_numpy(self.pools.astype(np.int64)).to(self.device)
+
+            self.upsamples = cpp_neighbors.batch_query(  # up_i
+                queries=numpy_tensor,
+                supports=subsampled,
+                q_batches=length,
+                s_batches=subsampled_len,
+                radius=2 * radius,
+            )
+            self.upsamples = torch.from_numpy(self.upsamples.astype(np.int64)).to(self.device)
+            self.superpoints = Cloud.from_tensor(subsampled)
+            self.superpoints.subpoints = self
+            self.superpoints.features = self.features.clone().to(self.device)
+        else:
+            self.pools = torch.zeros((0, 1), dtype=torch.int64, device=self.device)
+            self.upsamples = torch.zeros((0, 1), dtype=torch.int64, device=self.device)
 
     def paint(self, rgb: Union[List, torch.Tensor], cmap: str = "RdBu", computeNormals: bool = False) -> None:
         """
@@ -271,7 +249,7 @@ class Cloud:
         rgb = rgb.cpu().numpy()
         rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
         cmap = mpl.colormaps[cmap]
-        self.pcd.point.colors = o3d.core.Tensor(cmap(rgb)[:, :3], o3d.core.float32, o3d.core.Device(self.__o3ddevice))
+        self.pcd.point.colors = o3d.core.Tensor(cmap(rgb)[:, :3], o3d.core.float32, o3d.core.Device(self.o3ddevice))
 
     class DOWNSAMPLE_MODE(Enum):
         RANDOM = "_random_downsample"
@@ -289,10 +267,10 @@ class Cloud:
         instance.features = torch.gather(self.features, dim=1, index=idx.unsqueeze(-1).expand(-1, -1, 1))
         try:  # Possibly empty arrays
             instance.pcd.point.colors = o3d.core.Tensor(
-                np.asarray(instance.pcd.point.colors)[idx, :], o3d.core.float32, o3d.core.Device(self.__o3ddevice)
+                np.asarray(instance.pcd.point.colors)[idx, :], o3d.core.float32, o3d.core.Device(self.o3ddevice)
             )
             instance.pcd.point.normals = o3d.core.Tensor(
-                np.asarray(instance.pcd.point.normals)[idx, :], o3d.core.float32, o3d.core.Device(self.__o3ddevice)
+                np.asarray(instance.pcd.point.normals)[idx, :], o3d.core.float32, o3d.core.Device(self.o3ddevice)
             )
         except (KeyError, IndexError):
             pass
@@ -330,12 +308,12 @@ def collate_cloud(batch: List["Cloud"]) -> "Cloud":
         cloud.pcd.point.colors = o3d.core.Tensor(
             np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
             o3d.core.Dtype.Float32,
-            # o3d.core.Device(cls.__o3ddevice),
+            # o3d.core.Device(cls.o3ddevice),
         )
         cloud.pcd.point.normals = o3d.core.Tensor(
             np.concatenate([np.asarray(b.pcd.point.normals) for b in batch]),
             o3d.core.Dtype.Float32,
-            # o3d.core.Device(cls.__o3ddevice),
+            # o3d.core.Device(cls.o3ddevice),
         )
 
     except KeyError:

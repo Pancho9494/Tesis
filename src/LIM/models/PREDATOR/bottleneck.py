@@ -3,7 +3,7 @@ import copy
 from typing import Tuple, Callable
 from LIM.models.PREDATOR.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures.cloud import Cloud
-from debug.decorators import identify_method
+from debug.decorators import identify_method, timeit
 
 class GNN(torch.nn.Module):
     feature_dim: int
@@ -45,36 +45,45 @@ class CrossAttention(torch.nn.Module):
         self.dim = feature_dim // num_heads
         self.num_heads = num_heads
         self.merge = Conv1DAdapter(in_channels=feature_dim, out_channels=feature_dim, kernel_size=1)
-        self.proj = torch.nn.ModuleList([copy.deepcopy(self.merge) for _ in range(3)])
-        self.mlp = torch.nn.ModuleList(
-            [
-                Conv1DAdapter(in_channels=2 * feature_dim, out_channels=2 * feature_dim, kernel_size=1, bias=True),
-                InstanceNorm1D(num_features=2 * feature_dim),
-                ReLU(),
-                Conv1DAdapter(in_channels=2 * feature_dim, out_channels=feature_dim, kernel_size=1, bias=True),
-            ]
+        self.proj = torch.nn.Sequential(*[copy.deepcopy(self.merge) for _ in range(3)])
+        self.mlp = torch.nn.Sequential(
+            Conv1DAdapter(in_channels=2 * feature_dim, out_channels=2 * feature_dim, kernel_size=1, bias=True),
+            InstanceNorm1D(num_features=2 * feature_dim),
+            ReLU(),
+            Conv1DAdapter(in_channels=2 * feature_dim, out_channels=feature_dim, kernel_size=1, bias=True),
         )
     def __repr__(self) -> str:
         return f"CrossAttention(dim: {self.dim}, num_heads: {self.num_heads})"
 
     @identify_method
     def forward(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
-        src_attention = self._pipeline(source.features, target.features)
-        source.features += self.mlp(torch.cat([source.features, src_attention], dim=1))
+        src_attention = self._pipeline(source, target)
+        src_attention.features = torch.cat([source.features, src_attention.features], dim=1)
+        src_attention = self.mlp(src_attention)
+        source.features += src_attention.features
 
-        tgt_attention = self._pipeline(target.features, source.features)
-        target.features += self.mlp(torch.cat([target.features, tgt_attention], dim=1))
+        tgt_attention = self._pipeline(target, source)
+        tgt_attention.features = torch.cat([target.features, tgt_attention.features], dim=1)
+        tgt_attention = self.mlp(tgt_attention)
+        target.features += tgt_attention.features
 
         return source, target
 
-    def _pipeline(self, source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        query, key, value = source, target, target
-        BATCH_SIZE = query.size(0)
-        query, key, value = [
-            layer(x).view(BATCH_SIZE, self.dim, self.num_heads, -1) for layer, x in zip(self.proj, (query, key, value))
-        ]
-        x = self._attention(query, key, value)
-        return self.merge(x.contiguous().view(BATCH_SIZE, self.dim * self.num_heads, -1))
+    def _pipeline(self, source: Cloud, target: Cloud) -> torch.Tensor:
+        query, key, value = copy.copy(source), copy.copy(target), copy.copy(target)
+        BATCH_SIZE = query.features.size(0)
+        
+        for layer, temp in zip(self.proj, (query, key, value)):
+            temp = layer(temp)
+            temp.features = temp.features.view(BATCH_SIZE, self.dim, self.num_heads, -1)
+            
+        # query, key, value = [
+        #     layer(x).view(BATCH_SIZE, self.dim, self.num_heads, -1) for layer, x in zip(self.proj, (query, key, value))
+        # ]
+        src_attn = copy.copy(source)
+        src_attn.features = self._attention(query.features, key.features, value.features)
+        src_attn.features = src_attn.features.contiguous().view(BATCH_SIZE, self.dim * self.num_heads, -1)
+        return self.merge(src_attn)
 
     def _attention(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
         """
@@ -97,17 +106,60 @@ class BottleNeck(torch.nn.Module):
         super(BottleNeck, self).__init__()
         self.self_attention = GNN(feature_dim=256)
         self.cross_attention = CrossAttention(num_heads=4, feature_dim=256)
+        self.feature_projection = torch.nn.Conv1d(in_channels=256, out_channels=256, kernel_size=1, bias=True)
+        self.score_projection = torch.nn.Conv1d(in_channels=256, out_channels=1, kernel_size=1, bias=True)
+        self.temperature = torch.exp(torch.nn.Parameter(torch.tensor(-5.0))) + 0.03
         
     def __repr__(self) -> str:
         return "BottleNeck()"
 
     @identify_method
     def forward(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
-        print("===== SELF ATTENTION ========")
+        source.tensor  = source.tensor.reshape(1, source.tensor.shape[1], -1)
+        target.tensor = target.tensor.reshape(1, target.tensor.shape[1], -1)
+        source.features, target.features = (
+            source.features.reshape(1, -1, source.features.shape[0]),
+            target.features.reshape(1, -1, target.features.shape[0]),
+        )
+        
         source, target = self.self_attention(source), self.self_attention(target)
-        print("===== CROSS ATTENTION ========")
         source, target = self.cross_attention(source, target)
-        print("===== SELF ATTENTION ========")
         source, target = self.self_attention(source), self.self_attention(target)
 
+        return self._merge_features(source, target)
+        
+
+
+    def _merge_features(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
+        def _get_scores(cloud: Cloud) -> torch.Tensor:
+            scores = self.score_projection(cloud.features).squeeze(0).transpose(0, 1)
+            cloud.features = self.feature_projection(cloud.features).squeeze(0).transpose(0, 1)
+            return scores
+        
+        source_scores, target_scores = _get_scores(source), _get_scores(target)
+        inner_product = torch.matmul(source.features, target.features.transpose(0, 1))
+        
+        source.features = torch.cat(
+            [
+                source_scores,
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_product / self.temperature, dim=1),
+                    target_scores,
+                ),
+                source.features
+            ],
+            dim=1
+        )
+        target.features = torch.cat(
+            [
+                target_scores,
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_product.transpose(0, 1) / self.temperature, dim=1), 
+                    source_scores,
+                ),
+                target.features
+            ],
+            dim=1
+        )
+        
         return source, target

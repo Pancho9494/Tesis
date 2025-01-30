@@ -2,6 +2,7 @@ import torch
 from LIM.data.structures.cloud import Cloud
 from debug.decorators import identify_method
 
+
 class LeakyRelU(torch.nn.Module):
     negative_slope: float
 
@@ -12,7 +13,7 @@ class LeakyRelU(torch.nn.Module):
 
     def __repr__(self) -> str:
         return f"LeakyRelU(negative_slope: {self.negative_slope})"
-    
+
     @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self._relu(cloud.features)

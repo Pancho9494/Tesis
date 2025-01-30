@@ -1,60 +1,28 @@
 import torch
 from LIM.data.structures.pair import Pair
 from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
+from debug.decorators import identify_method
+from debug.context import inspect_cloud
 
 
 class Predator(torch.nn.Module):
-    #     Wrapper for the PREDATOR model that follows the ModelI interface
-
-    # layer_ind
-    #            00   'simple',               KPConv
-    #   0        01   'resnetb',              ResnetB
-    #            02   'resnetb_strided',      ResnetA  Pools(dl=0.05), Neighbors(r=0.0625)
-
-    #            03   'resnetb',              ResnetB
-    #   1        04   'resnetb',              ResnetB
-    #            05   'resnetb_strided',      ResnetA  Pools(dl=0.1),  Neighbors(r=0.125)
-
-    #            06   'resnetb',              ResnetB
-    #   2        07   'resnetb',              ResnetB
-    #            08   'resnetb_strided',      ResnetA  Pools(dl=0.2),  Neighbors(r=0.25)
-
-    #            09   'resnetb',              ResnetB
-    #   3        10   'resnetb',              ResnetB  zeros((0, 1)),      Neighbors(r=0.5)
-    #                                         Conv1D (it's called self.bottle)
-
-    #     11   'nearest_upsample',
-    #     12   'unary',
-    #     13   'nearest_upsample',
-    #     14   'unary',
-    #     15   'nearest_upsample',
-    #     16   'last_unary'
-    #     """
     def __init__(self) -> None:
         super(Predator, self).__init__()
         self.encoder = Encoder()
         self.bottleneck = BottleNeck()
         self.decoder = Decoder()
 
+    @identify_method
     def forward(self, pair: Pair) -> Pair:
-        source, target = pair.src, pair.target
-
-        source.tensor, target.tensor = source.tensor.reshape(-1, 3), target.tensor.reshape(-1, 3)
-        source.features, target.features = source.features.reshape(-1, 1), target.features.reshape(-1, 1)
+        source, target = pair.source, pair.target
         (source, source_skip), (target, target_skip) = self.encoder(source), self.encoder(target)
-        
-        
-        source.tensor, target.tensor = source.layers.points["0.5000"], target.layers.points["0.5000"]
-        source.tensor, target.tensor = (
-            source.tensor.reshape(1, source.tensor.shape[1], -1), 
-            target.tensor.reshape(1, target.tensor.shape[1], -1),
-        )
-        source.features, target.features = (
-            source.features.reshape(1, -1, source.features.shape[0]),
-            target.features.reshape(1, -1, target.features.shape[0]),
-        )
         source, target = self.bottleneck(source, target)
-        
-        
         source, target = self.decoder(source, source_skip), self.decoder(target, target_skip)
+
+        src, tgt = source.superpoints, target.superpoints
+        while (src is not None) and (tgt is not None):
+            src.features, tgt.features = src.features.detach(), tgt.features.detach()
+            src, tgt = src.superpoints, tgt.superpoints
+
+        pair.source, pair.target = source, target
         return pair

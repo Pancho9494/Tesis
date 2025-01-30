@@ -6,7 +6,11 @@ from tqdm import tqdm
 from LIM.data.structures.cloud import Cloud
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
+from config import settings
 from debug.decorators import identify_method
+from debug.context import inspect_cloud, inspect_tensor
+import math
+
 
 class KPConv(torch.nn.Module, ABC):
     in_dim: int
@@ -17,6 +21,7 @@ class KPConv(torch.nn.Module, ABC):
     weights: torch.nn.parameter.Parameter
     kernel_points: torch.nn.parameter.Parameter
     root: Path  # Path to the directory where the kernel points are stored / loaded from
+    device: torch.device = torch.device(settings.DEVICE)
 
     def __init__(
         self,
@@ -33,10 +38,11 @@ class KPConv(torch.nn.Module, ABC):
         self.KP_extent = KP_extent
         self.n_kernel_points = n_kernel_points
         self.weights = torch.nn.parameter.Parameter(
-            torch.zeros(size=(self.n_kernel_points, in_dim, out_dim), dtype=torch.float32),
+            torch.zeros(size=(self.n_kernel_points, in_dim, out_dim), dtype=torch.float32, device=self.device),
             requires_grad=True,
         )
-        self.root: Path = Path("src/models/PREDATOR/kernels/dispositions")
+        self.weights = self._kaiming_uniform_(self.weights)
+        self.root: Path = Path("src/LIM/models/PREDATOR/kernels/dispositions")
         self._load_kernel_points()
 
     def __repr__(self) -> str:
@@ -52,7 +58,7 @@ class KPConv(torch.nn.Module, ABC):
         x = cloud.features
 
         # add dummy point to filter all indices equal to len(s_pts) + 1
-        s_pts = torch.cat((s_pts, torch.zeros_like(s_pts[:1, :] + 1e6)), dim=0)
+        s_pts = torch.cat((s_pts, torch.zeros_like(s_pts[:1, :]) + 1e6), dim=0)
 
         neighbors = s_pts[neighbor_idxs, :]
         neighbors -= q_pts.unsqueeze(1)
@@ -62,8 +68,8 @@ class KPConv(torch.nn.Module, ABC):
         all_weights = torch.clamp(1 - torch.sqrt(sq_distances) / self.KP_extent, min=0.0)
         all_weights = torch.transpose(all_weights, 1, 2)
 
-        features = torch.cat((x, torch.zeros_like(x[:1, :])), dim=0)
-        neighbors_x = self._gather(features, neighbor_idxs)
+        x = torch.cat((x, torch.zeros_like(x[:1, :])), dim=0)
+        neighbors_x = self._gather(x, neighbor_idxs)
         weighted_features = torch.matmul(all_weights, neighbors_x).permute((1, 0, 2))
 
         kernel_outputs = torch.matmul(weighted_features, self.weights)
@@ -115,8 +121,8 @@ class KPConv(torch.nn.Module, ABC):
         self.kernel_points = self.kernel_points + np.random.normal(scale=0.01, size=self.kernel_points.shape)
         self.kernel_points = self.KP_radius * self.kernel_points
         self.kernel_points = np.matmul(self.kernel_points, R)
-        self.kernel_points = torch.nn.Parameter(
-            torch.tensor(self.kernel_points.astype(np.float32), dtype=torch.float32, requires_grad=False),
+        self.kernel_points = torch.tensor(
+            self.kernel_points.astype(np.float32), dtype=torch.float32, requires_grad=False, device=self.device
         )
 
     def _search_existing_kernel_points(self) -> bool:
@@ -204,41 +210,131 @@ class KPConv(torch.nn.Module, ABC):
         o3d.io.write_point_cloud(str(self.root / f"k_{self.n_kernel_points:03d}_3D.ply"), pcd)
         return kernel_points
 
+    def _kaiming_uniform_(self, tensor, a=0, mode="fan_in", nonlinearity="leaky_relu"):
+        r"""Fills the input `Tensor` with values according to the method
+        described in `Delving deep into rectifiers: Surpassing human-level
+        performance on ImageNet classification` - He, K. et al. (2015), using a
+        uniform distribution. The resulting tensor will have values sampled from
+        :math:`\mathcal{U}(-\text{bound}, \text{bound})` where
+
+        .. math::
+            \text{bound} = \text{gain} \times \sqrt{\frac{3}{\text{fan\_mode}}}
+
+        Also known as He initialization.
+
+        Args:
+            tensor: an n-dimensional `torch.Tensor`
+            a: the negative slope of the rectifier used after this layer (only
+                used with ``'leaky_relu'``)
+            mode: either ``'fan_in'`` (default) or ``'fan_out'``. Choosing ``'fan_in'``
+                preserves the magnitude of the variance of the weights in the
+                forward pass. Choosing ``'fan_out'`` preserves the magnitudes in the
+                backwards pass.
+            nonlinearity: the non-linear function (`nn.functional` name),
+                recommended to use only with ``'relu'`` or ``'leaky_relu'`` (default).
+
+        Examples:
+            >>> w = torch.empty(3, 5)
+            >>> nn.init.kaiming_uniform_(w, mode='fan_in', nonlinearity='relu')
+        """
+        fan = self._calculate_correct_fan(tensor, mode)
+        gain = self._calculate_gain(nonlinearity, a)
+        std = gain / math.sqrt(fan)
+        bound = math.sqrt(3.0) * std  # Calculate uniform bounds from standard deviation
+        with torch.no_grad():
+            return tensor.uniform_(-bound, bound)
+
+    def _calculate_correct_fan(self, tensor, mode):
+        mode = mode.lower()
+        valid_modes = ["fan_in", "fan_out"]
+        if mode not in valid_modes:
+            raise ValueError("Mode {} not supported, please use one of {}".format(mode, valid_modes))
+
+        fan_in, fan_out = self._calculate_fan_in_and_fan_out(tensor)
+        return fan_in if mode == "fan_in" else fan_out
+
+    def _calculate_gain(self, nonlinearity, param=None):
+        r"""Return the recommended gain value for the given nonlinearity function.
+        The values are as follows:
+
+        ================= ====================================================
+        nonlinearity      gain
+        ================= ====================================================
+        Linear / Identity :math:`1`
+        Conv{1,2,3}D      :math:`1`
+        Sigmoid           :math:`1`
+        Tanh              :math:`\frac{5}{3}`
+        ReLU              :math:`\sqrt{2}`
+        Leaky Relu        :math:`\sqrt{\frac{2}{1 + \text{negative\_slope}^2}}`
+        ================= ====================================================
+
+        Args:
+            nonlinearity: the non-linear function (`nn.functional` name)
+            param: optional parameter for the non-linear function
+
+        Examples:
+            >>> gain = nn.init.calculate_gain('leaky_relu', 0.2)  # leaky_relu with negative_slope=0.2
+        """
+        linear_fns = [
+            "linear",
+            "conv1d",
+            "conv2d",
+            "conv3d",
+            "conv_transpose1d",
+            "conv_transpose2d",
+            "conv_transpose3d",
+        ]
+        if nonlinearity in linear_fns or nonlinearity == "sigmoid":
+            return 1
+        elif nonlinearity == "tanh":
+            return 5.0 / 3
+        elif nonlinearity == "relu":
+            return math.sqrt(2.0)
+        elif nonlinearity == "leaky_relu":
+            if param is None:
+                negative_slope = 0.01
+            elif not isinstance(param, bool) and isinstance(param, int) or isinstance(param, float):
+                # True/False are instances of int, hence check above
+                negative_slope = param
+            else:
+                raise ValueError("negative_slope {} not a valid number".format(param))
+            return math.sqrt(2.0 / (1 + negative_slope**2))
+        else:
+            raise ValueError("Unsupported nonlinearity {}".format(nonlinearity))
+
+    def _calculate_fan_in_and_fan_out(self, tensor):
+        dimensions = tensor.dim()
+        if dimensions < 2:
+            raise ValueError("Fan in and fan out can not be computed for tensor with fewer than 2 dimensions")
+
+        num_input_fmaps = tensor.size(1)
+        num_output_fmaps = tensor.size(0)
+        receptive_field_size = 1
+        if tensor.dim() > 2:
+            receptive_field_size = tensor[0][0].numel()
+        fan_in = num_input_fmaps * receptive_field_size
+        fan_out = num_output_fmaps * receptive_field_size
+
+        return fan_in, fan_out
+
 
 class KPConvNeighbors(KPConv):
-    neighbor_radius: float
-    sampleDL: float
-
-    def __init__(self, neighbor_radius: float, sampleDL: float, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:
         super(KPConvNeighbors, self).__init__(**kwargs)
-        self.neighbor_radius = neighbor_radius
-        self.sampleDL = sampleDL
 
     def fetch(self, cloud: Cloud) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        cloud.layers.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
-        if self.sampleDL is not None:
-            cloud.layers.within(sampleDL=2 * self.sampleDL, radius=2 * self.neighbor_radius)
-
-        q_pts = cloud.layers.points[f"{self.neighbor_radius:2.04f}"]
-        s_pts = cloud.layers.points[f"{self.neighbor_radius:2.04f}"]
-        neighbors = cloud.layers.neighbors[f"{self.neighbor_radius:2.04f}"]
+        q_pts = cloud.tensor
+        s_pts = cloud.tensor
+        neighbors = cloud.neighbors
         return q_pts, s_pts, neighbors
 
 
 class KPConvPools(KPConv):
-    neighbor_radius: float
-    sampleDL: float
-
-    def __init__(self, neighbor_radius: float, sampleDL: float, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:
         super(KPConvPools, self).__init__(**kwargs)
-        self.neighbor_radius = neighbor_radius
-        self.sampleDL = sampleDL
 
     def fetch(self, cloud: Cloud) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        cloud.layers.within(sampleDL=self.sampleDL, radius=self.neighbor_radius)
-        cloud.layers.within(sampleDL=2 * self.sampleDL, radius=2 * self.neighbor_radius)
-
-        q_pts = cloud.layers.points[f"{2 * self.neighbor_radius:2.04f}"]
-        s_pts = cloud.layers.points[f"{self.neighbor_radius:2.04f}"]
-        pools = cloud.layers.pools[f"{self.neighbor_radius:2.04f}"]
+        q_pts = cloud.superpoints.tensor
+        s_pts = cloud.tensor
+        pools = cloud.pools
         return q_pts, s_pts, pools

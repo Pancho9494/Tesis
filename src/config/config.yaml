@@ -10,7 +10,7 @@ MODEL:
     N_BLOCKS: 5
     PADDING: 0.1
 
-DEVICE: "cpu"
+DEVICE: "cuda"
 
 TRAINER:
     BATCH_SIZE: 1
@@ -24,18 +24,18 @@ TRAINER:
 
     POINTCLOUD_TF:
       TRAIN:
-        CENTERZRANDOM:
-          BASE_RATIO: 0.5
+        # CENTERZRANDOM:
+        #   BASE_RATIO: 0.5
         DOWNSAMPLE:
-          N_POINTS: 4096
+          N_POINTS: 30000
         NOISE:
           NOISE: 0.005
 
       VALIDATION:
-        CENTERZRANDOM:
-          BASE_RATIO: 0.5
+        # CENTERZRANDOM:
+        #   BASE_RATIO: 0.5
         DOWNSAMPLE:
-          N_POINTS: 4096
+          N_POINTS: 30000
         NOISE:
           NOISE: 0.005
 
