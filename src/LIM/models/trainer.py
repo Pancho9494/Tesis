@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Union, Tuple
 
 from config import settings
 from LIM.data.structures import Cloud, transform_factory, Pair
-from LIM.data.sets import CloudDatasetsI, collate_scannet
+from LIM.data.sets import CloudDatasetsI, collate_scannet, ThreeDLoMatch
 from LIM.metrics.losses import Loss, L1Loss, IOU, CircleLoss, OverlapLoss, MatchabilityLoss, MultiLoss
 
 from debug.context import inspect_tensor
@@ -70,10 +70,14 @@ class BaseTrainer(ABC):
 
     def train(self) -> None:
         for self.current.epoch in range(self.current.epoch, settings.TRAINER.EPOCHS):
-            for self.current.step, sample in enumerate(self.train_loader, self.current.step):
+            for self.current.step, sample in enumerate(self.train_loader):
                 self.__clean_memory()
-                self.__train_step(sample)
-                self.__val_step()
+                try:
+                    self.__train_step(sample)
+                    self.__val_step()
+                except RuntimeError:
+                    self.dataset.force_downsample(sample)
+                    continue
                 self.__log(show=True)
                 self.__backup_model(self.model.state_dict(), "latest")
             self.scheduler.step()
@@ -148,7 +152,9 @@ class BaseTrainer(ABC):
         if not show:
             return
 
-        step_id = f"Epoch[{(self.current.epoch):02d}]\tIter[{(self.current.step):02d}]"
+        step_id = f"Epoch[{self.current.epoch:02d}]"
+        step_id += f" Step[{self.current.step:02d}]"
+        step_id += f" Iter[{(self.current.epoch * len(self.train_loader)) + (self.current.step):02d}]"
         print(step_id + self._custom_loss_log())
 
     def __make_split(self) -> None:
@@ -264,13 +270,13 @@ class PredatorTrainer(BaseTrainer):
     def _custom_loss_log(self):
         ON_FIRST_STEP: bool = self.current == 0
         ON_VALIDATION_STEP: bool = self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
-        out = f"\tMultiLossTrain[{self.multi_loss.get('train'):5.4f}] = "
+        out = f"\tMultiTrain[{self.multi_loss.get('train'):5.4f}] = "
         out += f"Circle[{self.circle_loss.get('train'):5.4f}] + "
         out += f"Overlap[{self.overlap_loss.get('train'):5.4f}] + "
         out += f"Match[{self.matchability_loss.get('train'):5.4f}]"
 
         if not ON_FIRST_STEP and ON_VALIDATION_STEP:
-            out += f"\tMultiLossVal[{self.multi_loss.get('val'):5.4f}]  = "
+            out += f"\tMultiVal[{self.multi_loss.get('val'):5.4f}]  = "
             out += f"Circle[{self.circle_loss.get('val'):5.4f}] + "
             out += f"Overlap[{self.overlap_loss.get('val'):5.4f}] + "
             out += f"Match[{self.matchability_loss.get('val'):5.4f}]"

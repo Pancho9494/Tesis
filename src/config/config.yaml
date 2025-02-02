@@ -34,8 +34,8 @@ TRAINER:
       VALIDATION:
         # CENTERZRANDOM:
         #   BASE_RATIO: 0.5
-        DOWNSAMPLE:
-          N_POINTS: 30000
+        # DOWNSAMPLE:
+        #   N_POINTS: 30000
         NOISE:
           NOISE: 0.005
 

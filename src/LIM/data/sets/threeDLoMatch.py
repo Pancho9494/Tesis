@@ -2,7 +2,7 @@ import torch
 import torchvision
 from pathlib import Path
 from torch.utils.data import Dataset
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict
 import pickle
 import numpy as np
 from LIM.data.structures.cloud import Cloud, collate_cloud
@@ -24,6 +24,7 @@ class ThreeDLoMatch(Dataset):
     rot_paths: List[np.ndarray]
     trans_paths: List[np.ndarray]
     overlap_paths: List[Path]
+    downsample_table: Dict[str, float] = {}
 
     def __init__(self) -> None:
         self.dir = Path("./src/LIM/data/raw/3DLoMatch/")
@@ -53,6 +54,11 @@ class ThreeDLoMatch(Dataset):
     def __getitem__(self, idx: int) -> Pair:
         src = Cloud.from_path(self.src_paths[idx])
         target = Cloud.from_path(self.tgt_paths[idx])
+
+        if (tag := f"{src.path.parent.name}/{src.path.stem}") in self.downsample_table:
+            src = src.downsample(int(self.downsample_table[tag] * len(src)), Cloud.DOWNSAMPLE_MODE.RANDOM)
+            target = target.downsample(int(self.downsample_table[tag] * len(target)), Cloud.DOWNSAMPLE_MODE.RANDOM)
+
         ground_truth = np.eye(4)
         ground_truth[:3, :3] = self.rot_paths[idx]
         ground_truth[:3, 3] = self.trans_paths[idx].flatten()
@@ -62,6 +68,13 @@ class ThreeDLoMatch(Dataset):
         pair.overlap = overlap
         pair.correspondences
         return pair
+
+    @classmethod
+    def force_downsample(cls, pair: Pair) -> None:
+        path = pair.source.path[0]
+        if (tag := f"{path.parent.name}/{path.stem}") not in cls.downsample_table:
+            cls.downsample_table[tag] = 1.0
+        cls.downsample_table[tag] = max(0.1, cls.downsample_table[tag] - 0.1)
 
     @property
     def collate_fn(self) -> Callable:

@@ -116,7 +116,7 @@ class Cloud:
     @property
     def features(self) -> torch.Tensor:
         if not (_EMPTY := len(self._features) == 0):
-            return self._features
+            return self._features.to(self.device)
 
         if len(self.shape) == 3:
             self._features = torch.ones((self.shape[0], self.shape[1], 1))
@@ -256,13 +256,24 @@ class Cloud:
         PROBABILISTIC = "_probabilistic_downsample"
 
     def downsample(self, size: int, mode: DOWNSAMPLE_MODE, **kwargs) -> "Cloud":
+        if must_squeeze := (len(self.tensor.shape) == 2):  # TODO: I think I can make this cleaner, but not right now
+            self.tensor = self.tensor.reshape((1, -1, 3))
+            self.features = self.features.reshape((1, -1, 1))
+
         BATCH_SIZE, NUM_POINTS, N_DIM = self.tensor.shape
         instance = copy.deepcopy(self)
-        if NUM_POINTS <= size:
-            return instance
+
+        if (NUM_POINTS <= size) or (size == 0):
+            if must_squeeze:
+                self.tensor = self.tensor.reshape((-1, 3))
+                self.features = self.features.reshape((-1, 1))
+                instance.tensor = instance.tensor.reshape((-1, 3))
+                instance.features = instance.features.reshape((-1, 1))
+            return self
 
         method = getattr(self, mode.value)
         idx = method(size, **kwargs)
+
         instance.tensor = torch.gather(self.tensor, dim=1, index=idx.unsqueeze(-1).expand(-1, -1, N_DIM))
         instance.features = torch.gather(self.features, dim=1, index=idx.unsqueeze(-1).expand(-1, -1, 1))
         try:  # Possibly empty arrays
@@ -274,6 +285,11 @@ class Cloud:
             )
         except (KeyError, IndexError):
             pass
+        if must_squeeze:
+            self.tensor = self.tensor.reshape((-1, 3))
+            self.features = self.features.reshape((-1, 1))
+            instance.tensor = instance.tensor.reshape((-1, 3))
+            instance.features = instance.features.reshape((-1, 1))
         return instance
 
     def _random_downsample(self, size: int) -> torch.Tensor:

@@ -1,6 +1,6 @@
 services:
   LIM:
-    image: rocm/pytorch:rocm6.1_ubuntu22.04_py3.10_pytorch_2.4
+    image: LIM/rocm6.1
     container_name: LIM_docker
     devices:
       - "/dev/kfd:/dev/kfd"
@@ -18,6 +18,9 @@ services:
       - "$HOME/dockerx:/dockerx"
       - "..:/dockerx/LIM"
       - "/tmp/.X11-unix:/tmp/.X11-unix"  # Share the X11 socket with the container
+      - type: bind
+        source: /home/fmolina/code/Personal/LIM/src/LIM/data/raw
+        target: /dockerx/LIM/data/
     working_dir: "/dockerx/LIM"
     entrypoint: "/bin/bash"
     stdin_open: true
@@ -25,5 +28,5 @@ services:
     environment:
       - DISPLAY
       - HSA_OVERRIDE_GFX_VERSION=10.3.0
-    ports:
-      - "43800:80"
+    # ports:
+      # - "43800:80"
