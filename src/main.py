@@ -1,6 +1,6 @@
-import torch
 import numpy as np
 import random
+import torch
 
 import torch.utils.viz
 from LIM.models.PREDATOR.predator import Predator

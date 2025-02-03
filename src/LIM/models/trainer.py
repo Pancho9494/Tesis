@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from aim import Run
+import aim
 import copy
 from dataclasses import dataclass, field
 from functools import partial
@@ -7,45 +7,60 @@ import gc
 import multiprocessing as mp
 from pathlib import Path
 import torch
-import torchvision
-from typing import Dict, List, Any, Union, Tuple
+from typing import Dict, Any, Union, Tuple, Callable
 
 from config import settings
 from LIM.data.structures import Cloud, transform_factory, Pair
-from LIM.data.sets import CloudDatasetsI, collate_scannet, ThreeDLoMatch
-from LIM.metrics.losses import Loss, L1Loss, IOU, CircleLoss, OverlapLoss, MatchabilityLoss, MultiLoss
-
-from debug.context import inspect_tensor
-
-torch.multiprocessing.set_start_method("spawn", force=True)
+from LIM.data.sets import CloudDatasetsI
+from LIM.metrics import MultiLoss, Loss, L1Loss, IOU, CircleLoss, OverlapLoss, MatchabilityLoss
+import functools
 
 
-class Transforms:
-    cloud_tf: torchvision.transforms.Compose
-    implicit_tf: torchvision.transforms.Compose
-
-    def __init__(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:
-        self.cloud_tf = torchvision.transforms.Compose(cloud_tf)
-        self.implicit_tf = torchvision.transforms.Compose(implicit_tf)
+def handle_OOM(func: Callable) -> Callable:
+    @functools.wraps(func)
+    def inner(*args, **kwargs) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except RuntimeError:
+            return None
 
 
 class BaseTrainer(ABC):
     @dataclass
-    class Current:
-        epoch: int = field(default=0)
-        step: int = field(default=0)
-        best_model: Dict[str, Any] = field(default_factory=dict)
+    class RunState:
+        @dataclass
+        class Current:
+            epoch: int = field(default=0)
+            step: int = field(default=0)
+            best_model: Dict[str, Any] = field(default_factory=dict)
+
+        tracker: aim.Run = field(default_factory=aim.Run)
+        current: Current = field(default_factory=Current)
+
+        @property
+        def on_first_step(self) -> bool:
+            return self.current.step == 0
+
+        @property
+        def on_validation_step(self) -> bool:
+            return self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
+
+        @property
+        def on_accumulation_step(self) -> bool:
+            return (self.current.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
+
+        @property
+        def on_backup_step(self) -> bool:
+            return self.current.step % settings.TRAINER.BACKUP_PERIOD == 0
 
     device: torch.device = torch.device(settings.DEVICE)
-    run: Run
-    current: Current
+    state: RunState
     model: torch.nn.Module
     dataloader: torch.utils.data.DataLoader
     dataset: CloudDatasetsI
     optimizer: torch.optim.Optimizer
     scheduler: torch.optim.lr_scheduler.CosineAnnealingLR
     scaler: torch.amp.GradScaler
-    transforms: Dict[str, Transforms]
 
     def __init__(self, tag: str, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         self.tag = tag
@@ -61,12 +76,12 @@ class BaseTrainer(ABC):
             eta_min=1e-4,
         )
         self.scaler = torch.amp.GradScaler(settings.DEVICE)
-
+        self.state = BaseTrainer.RunState()
         self.__make_split()
-        self.current = BaseTrainer.Current()
-        self.run = Run()
-        # self.run["trainer"] = settings.TRAINER.__dict__
-        # self.run["model"] = settings.MODEL.__dict__
+
+    @property
+    def current(self) -> RunState.Current:
+        return self.state.current
 
     def train(self) -> None:
         for self.current.epoch in range(self.current.epoch, settings.TRAINER.EPOCHS):
@@ -85,23 +100,17 @@ class BaseTrainer(ABC):
 
     def __train_step(self, sample: Any) -> None:
         self.model.train()
-
         self._custom_train_step(sample)
-
-        accumulation_done = (self.current.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
         on_last_batch = (self.current.step + 1) == len(self.train_loader)
-        if accumulation_done or on_last_batch:
+        if self.state.on_accumulation_step or on_last_batch:
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
-            # torch.cuda.memory._dump_snapshot("src/debug/profiling/full.pickle")
 
     @abstractmethod
     def _custom_train_step(self, sample: Any) -> None: ...
 
     def __val_step(self) -> None:
-        ON_FIRST_STEP: bool = self.current.step == 0
-        ON_VALIDATION_STEP: bool = self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
-        if ON_FIRST_STEP or not ON_VALIDATION_STEP:
+        if self.state.on_first_step or not self.state.on_validation_step:
             return
 
         self.model.eval()
@@ -131,9 +140,7 @@ class BaseTrainer(ABC):
         self.current.epoch = backup["current_epoch"]
 
     def __backup_model(self, model: Dict[str, Any], name: str) -> None:
-        ON_FIRST_STEP: bool = self.current.step == 0
-        ON_BACKUP_STEP: bool = self.current.step % settings.TRAINER.BACKUP_PERIOD == 0
-        if ON_FIRST_STEP or not ON_BACKUP_STEP:
+        if self.state.on_first_step or not self.state.on_backup_step:
             return
 
         torch.save(
@@ -207,30 +214,28 @@ class IAETrainer(BaseTrainer):
 
     def __init__(self, tag: str, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         super(IAETrainer, self).__init__(tag, model, dataset)
-        self.l1_loss = L1Loss(scaler=self.scaler, reduction="none", accum_steps=settings.TRAINER.ACCUM_STEPS)
-        self.iou_loss = IOU(scaler=self.scaler, threshold=0.5)
+        self.l1_loss = L1Loss(trainer_state=self.state, reduction="none")
+        self.iou_loss = IOU(trainer_state=self.state, threshold=0.5)
 
     def _custom_train_step(self, sample: Tuple[Cloud, Cloud]) -> None:
         cloud, implicit = sample
         with torch.amp.autocast(settings.DEVICE):
             predicted_df = self.model(cloud, implicit)
-            self.l1_loss.train(predicted_df, implicit.features, with_grad=True)
-            self.iou_loss.train(predicted_df, implicit.features)
+            self.l1_loss.train(sample=(predicted_df, implicit.features))
+            self.iou_loss.train(sample=(predicted_df, implicit.features))
 
     def _custom_val_step(self) -> bool:
         cloud, implicit = next(self.val_loader)
         predicted_df = self.model(cloud, implicit)
-        _best_l1_loss: bool = self.l1_loss.val(predicted_df, implicit.features)
-        best_iou: bool = self.iou_loss.val(predicted_df, implicit.features)
-        return best_iou
+        self.l1_loss.val(sample=(predicted_df, implicit.features))
+        self.iou_loss.val(sample=(predicted_df, implicit.features))
+        return self.l1_loss.val.on_best_iter
 
     def _custom_loss_log(self) -> str:
-        ON_FIRST_STEP: bool = self.current == 0
-        ON_VALIDATION_STEP: bool = self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
-        out = f"\tL1LossTrain[{self.l1_loss.get('train'):5.2f}] IOUTrain[{self.iou_loss.get('train'):5.2f}]"
+        out = f"\tL1LossTrain[{self.l1_loss.train.current:5.2f}] IOUTrain[{self.iou_loss.train.current:5.2f}]"
         out += (
-            f"\tL1LossVal[{self.l1_loss.get('val'):5.2f}] IOUVal[{self.iou_loss.get('val'):5.2f}]"
-            if not ON_FIRST_STEP and ON_VALIDATION_STEP
+            f"\tL1LossVal[{self.l1_loss.val.current:5.2f}] IOUVal[{self.iou_loss.val.current:5.2f}]"
+            if not self.state.on_first_step and self.state.on_validation_step
             else ""
         )
         return out
@@ -244,98 +249,39 @@ class PredatorTrainer(BaseTrainer):
 
     def __init__(self, tag: str, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         super(PredatorTrainer, self).__init__(tag, model, dataset)
-        self.circle_loss = CircleLoss(scaler=self.scaler, weight=1.0)
-        self.overlap_loss = OverlapLoss(scaler=self.scaler, weight=1.0)
-        self.matchability_loss = MatchabilityLoss(scaler=self.scaler, weight=0.0)
+        self.circle_loss = CircleLoss(trainer_state=self.state, weight=1.0)
+        self.overlap_loss = OverlapLoss(trainer_state=self.state, weight=1.0)
+        self.matchability_loss = MatchabilityLoss(trainer_state=self.state, weight=0.0)
         self.multi_loss = MultiLoss(
             losses=[
                 self.circle_loss,
                 self.overlap_loss,
                 self.matchability_loss,
             ],
-            scaler=self.scaler,
         )
 
     def _custom_train_step(self, sample: Pair) -> None:
-        prediction = self.model(sample)
-        self.multi_loss.train(prediction, with_grad=True)
+        with torch.no_grad():
+            sample.correspondences
+            sample.source.pcd = sample.source.pcd.transform(sample.GT_tf_matrix)
+
+        loss = self.multi_loss.train(self.model(sample)) / settings.TRAINER.ACCUM_STEPS
+        self.scaler.scale(loss).backward(retain_graph=True)
 
     def _custom_val_step(self) -> bool:
-        sample: Pair = next(self.val_loader)
-        prediction = self.model(sample)
-        best_multi_loss: bool = self.multi_loss.val(prediction)
+        self.multi_loss.val(self.model(next(self.val_loader)))
+        return self.multi_loss.val.on_best_iter
 
-        return best_multi_loss
+    def _custom_loss_log(self) -> str:
+        out = f"\tMultiTrain[{self.multi_loss.train.current:5.4f}] = "
+        out += f"Circle[{self.circle_loss.train.current:5.4f}] + "
+        out += f"Overlap[{self.overlap_loss.train.current:5.4f}] + "
+        out += f"Match[{self.matchability_loss.train.current:5.4f}]"
 
-    def _custom_loss_log(self):
-        ON_FIRST_STEP: bool = self.current == 0
-        ON_VALIDATION_STEP: bool = self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
-        out = f"\tMultiTrain[{self.multi_loss.get('train'):5.4f}] = "
-        out += f"Circle[{self.circle_loss.get('train'):5.4f}] + "
-        out += f"Overlap[{self.overlap_loss.get('train'):5.4f}] + "
-        out += f"Match[{self.matchability_loss.get('train'):5.4f}]"
+        if not self.state.on_first_step and self.state.on_validation_step:
+            out += f"\tMultiVal[{self.multi_loss.val.current:5.4f}]  = "
+            out += f"Circle[{self.circle_loss.val.current:5.4f}] + "
+            out += f"Overlap[{self.overlap_loss.val.current:5.4f}] + "
+            out += f"Match[{self.matchability_loss.val.current:5.4f}]"
 
-        if not ON_FIRST_STEP and ON_VALIDATION_STEP:
-            out += f"\tMultiVal[{self.multi_loss.get('val'):5.4f}]  = "
-            out += f"Circle[{self.circle_loss.get('val'):5.4f}] + "
-            out += f"Overlap[{self.overlap_loss.get('val'):5.4f}] + "
-            out += f"Match[{self.matchability_loss.get('val'):5.4f}]"
-
-        self.run.track(
-            self.multi_loss.get("train"),
-            name="MultiLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "train"},
-        )
-        self.run.track(
-            self.circle_loss.get("train"),
-            name="CircleLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "train"},
-        )
-        self.run.track(
-            self.overlap_loss.get("train"),
-            name="OverlapLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "train"},
-        )
-        self.run.track(
-            self.matchability_loss.get("train"),
-            name="MatchabilityLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "train"},
-        )
-
-        self.run.track(
-            self.multi_loss.get("val"),
-            name="MultiLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "val"},
-        )
-        self.run.track(
-            self.circle_loss.get("val"),
-            name="CircleLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "val"},
-        )
-        self.run.track(
-            self.overlap_loss.get("val"),
-            name="OverlapLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "val"},
-        )
-        self.run.track(
-            self.matchability_loss.get("val"),
-            name="MatchabilityLoss",
-            step=self.current.step,
-            epoch=self.current.epoch,
-            context={"subset": "val"},
-        )
         return out

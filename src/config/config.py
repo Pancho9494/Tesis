@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 from typing import Dict, Any, Optional, List
 import yaml
 
@@ -34,7 +35,7 @@ class Trainer(BaseSettings):
     BATCH_SIZE: int
     LEARNING_RATE: float
     EPOCHS: int
-    ACCUM_STEPS: int
+    ACCUM_STEPS: int = Field(default=1, ge=1)
     VALIDATION_PERIOD: int
     BACKUP_PERIOD: int
     VALIDATION_SPLIT: float

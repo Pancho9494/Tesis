@@ -1,47 +1,102 @@
-from LIM.data.pairs import Pairs
-from torch.utils.data import Dataset
-from LIM.metrics.metricI import PairMetric, DatasetMetric
-import copy
-import open3d as o3d
-import numpy as np
+from abc import ABC, abstractmethod
+import aim
+from dataclasses import dataclass, field
+import torch
+from typing import Any, Callable, Protocol, List
+
+from config import settings
 
 
-class RootMeanSquaredError(PairMetric):
-    def __call__(self, pair: Pairs) -> float:
-        pred, truth = copy.deepcopy(pair.target), copy.deepcopy(pair.target)
-        pred_arr = np.asfarray(pred.pcd.transform(pair.prediction).points)
-        truth_arr = np.asfarray(truth.pcd.transform(pair.truth).points)
-        return np.sqrt(((pred_arr - truth_arr) ** 2).mean())
+class TrainerStateProtocol(Protocol):
+    class CurrentProtocol(Protocol):
+        epoch: int
+        step: int
+
+    tracker: aim.Run
+    current: CurrentProtocol
 
 
-class RegistrationRecall(DatasetMetric):
-    """
-    The fraction of scan pairs for which the correct transformation parameters are found with RANSAC i.e. the RMSE is
-    smaller than 0.2
-    """
+@dataclass
+class Metric(ABC):
+    """ """
 
-    def __call__(self, data: Dataset) -> float:
-        RMSE = RootMeanSquaredError()
-        recall = 0.0
-        for pair in data:
-            rmse = RMSE(pair)
-            print(f"{pair} has RMSE of {rmse}")
-            if rmse < 0.2:
-                recall += 1
-        return recall / len(data)
+    name: str
+    context: str
+    trainer_state: TrainerStateProtocol
+    custom_function: Callable
+    current: float = field(default=0.0)
+    best: float = field(default=0.0)
+
+    def track(self, new_value: float) -> None:
+        self.current = new_value
+        if self.current > self.best:
+            self.best = self.current
+
+    @property
+    def on_best_iter(self) -> bool:
+        return self.current == self.best
+
+    def __call__(self, sample: Any) -> torch.Tensor:
+        self.current = (loss := self.custom_function(sample)).item()
+        if self.current > self.best:
+            self.best = self.current
+        self.trainer_state.tracker.track(
+            self.current,
+            name=self.name,
+            step=self.trainer_state.current.step,
+            epoch=self.trainer_state.current.epoch,
+            context={"subset": self.context},
+        )
+        return loss
 
 
-class FeatureMatchRecall(PairMetric):
-    """
-    The fraction of pairs that have >5% inlier matches with <10 cm residual under the ground truth transformation
-    """
+class Loss(ABC):
+    """ """
 
-    def __call__(self, pair: Pairs) -> float: ...
+    train: Metric
+    val: Metric
+    device = torch.device(settings.DEVICE)
+
+    def __init__(self, trainer_state: TrainerStateProtocol) -> None:
+        self.train = Metric(
+            name=self.__class__.__name__,
+            context="train",
+            trainer_state=trainer_state,
+            custom_function=self.__call__,
+        )
+        self.val = Metric(
+            name=self.__class__.__name__,
+            context="val",
+            trainer_state=trainer_state,
+            custom_function=self.__call__,
+        )
+
+    @abstractmethod
+    def __repr__(self) -> str: ...
+
+    @abstractmethod
+    def __call__(self, sample: Any) -> torch.Tensor: ...
 
 
-class InlierRatio(PairMetric):
-    """
-    The fraction of correct correspondences among the putative matches
-    """
+class MultiLoss:
+    train: Metric
+    val: Metric
+    losses: List[Loss]
 
-    def __call__(self, pair: Pairs) -> float: ...
+    def __init__(self, losses: List[Loss]):
+        self.losses = losses
+        self.train = Metric(
+            name="MutliLoss",
+            context="train",
+            trainer_state=losses[0].train.trainer_state,
+            custom_function=lambda sample: sum(loss.train(sample) for loss in self.losses),
+        )
+        self.val = Metric(
+            name="MutliLoss",
+            context="val",
+            trainer_state=losses[0].val.trainer_state,
+            custom_function=lambda sample: sum(loss.val(sample) for loss in self.losses),
+        )
+
+    def __repr__(self) -> str:
+        return f"MultiLoss({[loss for loss in self.losses]})"

@@ -1,102 +1,45 @@
 import torch
 import numpy as np
-from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
-from typing import Optional, Any, List
-from torch.cuda.amp import GradScaler
-from LIM.data.structures.cloud import Cloud
+from typing import Protocol, Tuple
 from LIM.data.structures.pair import Pair
-from debug.decorators import identify_method
-from debug.context import inspect_tensor
-import concurrent.futures
-from config import settings
-from multimethod import multimethod
+from LIM.metrics import Loss
+import aim
 
 
-@dataclass
-class Metric:
-    """
-    Class that tracks the best value for a loss
-    """
+class TrainerStateProtocol(Protocol):
+    class CurrentProtocol(Protocol):
+        epoch: int
+        step: int
 
-    current: float = field(default=0.0)
-    best: float = field(default=0.0)
-
-    def set(self, new_value: float) -> bool:
-        self.current = new_value
-        if self.current > self.best:
-            self.best = self.current
-            return True
-        return False
-
-
-@dataclass
-class Loss(ABC):
-    """
-    Class that holds the training and validation losses of its children calsses
-    """
-
-    _train: Metric
-    _val: Metric
-    scaler: GradScaler
-    accum_steps: Optional[int] = field(default=None)
-    device: torch.device = torch.device(settings.DEVICE)
-
-    def __init__(self, scaler: GradScaler) -> None:
-        self._train = Metric()
-        self._val = Metric()
-        self.scaler = scaler
-
-    @abstractmethod
-    def __call__(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor: ...
-
-    def train(self, sample: Any, with_grad: bool = False) -> bool:
-        loss: torch.Tensor = self.__call__(sample)
-        IS_BEST_STEP: bool = self._train.set(loss.item())
-
-        if with_grad:
-            loss /= self.accum_steps if self.accum_steps is not None else 1.0
-            self.scaler.scale(loss).backward(retain_graph=True)
-
-        return IS_BEST_STEP
-
-    def val(self, sample: Any) -> bool:
-        loss: torch.Tensor = self.__call__(sample)
-        IS_BEST_STEP: bool = self._val.set(loss.item())
-        return IS_BEST_STEP
-
-    def get(self, mode: str) -> float:
-        if mode.lower().strip() in ["train", "training"]:
-            return self._train.current
-        elif mode.lower().strip() in ["val", "validation"]:
-            return self._val.current
-        else:
-            raise AttributeError("Requested for invalid loss mode")
+    tracker: aim.Run
+    current: CurrentProtocol
 
 
 class L1Loss(Loss):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(kwargs["scaler"])
-        self.loss = torch.nn.L1Loss(kwargs["accum_steps"])
+    def __init__(self, trainer_state: TrainerStateProtocol, reduction: str) -> None:
+        super().__init__(trainer_state)
+        self.loss = torch.nn.L1Loss(reduction=reduction)
 
     def __repr__(self) -> str:
         return "L1Loss"
 
-    def __call__(self, predicted: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
+    def __call__(self, sample: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        predicted, real = sample
         return self.loss(predicted, real.squeeze(-1)).sum(-1).mean()
 
 
 class IOU(Loss):
-    threshold: float
+    THRESHOLD: float
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(kwargs["scaler"])
-        self.threshold = kwargs["threshold"]
+    def __init__(self, trainer_state: TrainerStateProtocol, threshold: float) -> None:
+        super().__init__(trainer_state)
+        self.THRESHOLD = threshold
 
     def __repr__(self) -> str:
         return "IOU"
 
-    def __call__(self, predicted: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
+    def __call__(self, sample: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        predicted, real = sample
         pred_arr: np.ndarray = (predicted <= 0.01).cpu().numpy()
         real_arr: np.ndarray = (real <= 0.01).cpu().numpy()
         if pred_arr.ndim >= 2:
@@ -104,7 +47,7 @@ class IOU(Loss):
         if real_arr.ndim >= 2:
             real_arr = real_arr.reshape(real_arr.shape[0], -1)
 
-        pred_arr, real_arr = pred_arr >= 0.5, real_arr >= 0.5
+        pred_arr, real_arr = pred_arr >= self.THRESHOLD, real_arr >= self.THRESHOLD
 
         area_union = (pred_arr | real_arr).astype(np.float32).sum(axis=-1)
         area_intersect = (pred_arr & real_arr).astype(np.float32).sum(axis=-1)
@@ -112,53 +55,8 @@ class IOU(Loss):
         return iou.mean()
 
 
-class MultiLoss(Loss):
-    losses: List[Loss]
-
-    def __init__(self, losses: List[Loss], **kwargs):
-        super().__init__(kwargs["scaler"])
-        self.losses = losses
-
-    def __repr__(self) -> str:
-        return f"MultiLoss({[loss for loss in self.losses]})"
-
-    def __call__(self, pair: Pair) -> float:
-        return sum([loss(pair) for loss in self.losses])
-
-    def train(self, sample: Pair, with_grad: bool = False) -> bool:
-        with torch.no_grad():
-            sample.correspondences
-            sample.source.pcd = sample.source.pcd.transform(sample.GT_tf_matrix)
-
-        total: torch.Tensor = torch.tensor([0.0], device=self.device)
-        for loss in self.losses:
-            current_loss = loss(sample)
-            loss._train.set(current_loss.item())
-            total = total + current_loss
-
-        IS_BEST_STEP: bool = self._train.set(total.item())
-
-        if with_grad:
-            total /= self.accum_steps if self.accum_steps is not None else 1.0
-            self.scaler.scale(total).backward(retain_graph=True)
-        return IS_BEST_STEP
-
-    def val(self, sample: Pair) -> bool:
-        with torch.no_grad():
-            sample.correspondences
-            sample.source.pcd = sample.source.pcd.transform(sample.GT_tf_matrix)
-            total: torch.Tensor = torch.tensor([0.0], device=self.device)
-            for loss in self.losses:
-                current_loss = loss(sample)
-                loss._val.set(current_loss.item())
-                total = total + current_loss
-
-        IS_BEST_STEP: bool = self._val.set(total.item())
-        return IS_BEST_STEP
-
-
 class CircleLoss(Loss):
-    WEIGHT: float
+    weight: float
     POS_RADIUS: float = 0.0375
     SAFE_RADIUS: float = 0.1
     POS_OPTIMAL: float = 0.1
@@ -168,15 +66,15 @@ class CircleLoss(Loss):
     NEG_MARGIN: float = 1.4
     MAX_POINTS: int = 256
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(kwargs["scaler"])
-        self.WEIGHT = kwargs["weight"] if "weight" in kwargs else 1.0
+    def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
+        super().__init__(trainer_state)
+        self.weight = weight
 
     def __repr__(self):
-        return f"CircleLoss(weight={self.WEIGHT})"
+        return f"CircleLoss(weight={self.weight})"
 
     def __call__(self, pair: Pair) -> torch.Tensor:
-        if self.WEIGHT <= 0.0:
+        if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device, requires_grad=True)
 
         sub_correspondence = pair.correspondences.matrix[
@@ -227,7 +125,7 @@ class CircleLoss(Loss):
         loss_col = torch.nn.functional.softplus(lse_pos_col + lse_neg_col) / self.LOG_SCALE
 
         circle_loss = (loss_row[row_sel].mean() + loss_col[col_sel].mean()) / 2
-        return self.WEIGHT * circle_loss
+        return self.weight * circle_loss
 
     def _square_distance(self, src, dst, normalised=False):
         """
@@ -244,18 +142,18 @@ class CircleLoss(Loss):
 
 
 class OverlapLoss(Loss):
-    WEIGHT: float
+    weight: float
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(kwargs["scaler"])
+    def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
+        super().__init__(trainer_state)
         self.BCELoss = torch.nn.BCELoss(reduction="none")
-        self.WEIGHT = kwargs["weight"] if "weight" in kwargs else 1.0
+        self.weight = weight
 
     def __repr__(self):
-        return f"OverlapLoss(weight={self.WEIGHT})"
+        return f"OverlapLoss(weight={self.weight})"
 
     def __call__(self, pair: Pair) -> torch.Tensor:
-        if self.WEIGHT <= 0.0:
+        if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device)
 
         ground_truth = torch.cat(
@@ -274,7 +172,7 @@ class OverlapLoss(Loss):
             dim=0,
         )
         overlaps = torch.cat(tensors=(pair.overlaps.src, pair.overlaps.target), dim=0)
-        return self.WEIGHT * self._weighted_BCELoss(overlaps, ground_truth)
+        return self.weight * self._weighted_BCELoss(overlaps, ground_truth)
 
     def _weighted_BCELoss(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         """
@@ -287,19 +185,19 @@ class OverlapLoss(Loss):
 
 
 class MatchabilityLoss(Loss):
-    WEIGHT: float
+    weight: float
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(kwargs["scaler"])
+    def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
+        super().__init__(trainer_state)
         self.BCELoss = torch.nn.BCELoss(reduction="none")
-        self.WEIGHT = kwargs["weight"] if "weight" in kwargs else 0.0
+        self.weight = weight
 
     def __repr__(self):
-        return f"MatchabilityLoss(weight={self.WEIGHT})"
+        return f"MatchabilityLoss(weight={self.weight})"
 
     # @identify_method(on=True)
     def __call__(self, pair: Pair) -> torch.Tensor:
-        if self.WEIGHT <= 0.0:
+        if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device, requires_grad=True)
 
         MATCHABILITY_RADIUS = 0.05
@@ -336,7 +234,7 @@ class MatchabilityLoss(Loss):
             dim=0,
         )
 
-        return self.WEIGHT * self._weighted_BCELoss(saliencies, ground_truth)
+        return self.weight * self._weighted_BCELoss(saliencies, ground_truth)
 
     def _weighted_BCELoss(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         """
