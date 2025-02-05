@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import aim
 from dataclasses import dataclass, field
 import torch
-from typing import Any, Callable, Protocol, List
+from typing import Any, Callable, Protocol, List, Dict
 
 from config import settings
 
@@ -11,6 +11,7 @@ class TrainerStateProtocol(Protocol):
     class CurrentProtocol(Protocol):
         epoch: int
         step: int
+        iteration: int
 
     tracker: aim.Run
     current: CurrentProtocol
@@ -21,16 +22,18 @@ class Metric(ABC):
     """ """
 
     name: str
-    context: str
+    context: Dict[str, str]
     trainer_state: TrainerStateProtocol
     custom_function: Callable
-    current: float = field(default=0.0)
+    
+    also_track: List[str] = field(default_factory=list)
     best: float = field(default=0.0)
+    current: float = field(default=0.0)
+    total_sum: float = field(default=0.0)
+    average: float = field(default=0.0)
 
-    def track(self, new_value: float) -> None:
-        self.current = new_value
-        if self.current > self.best:
-            self.best = self.current
+    def __name__(self) -> str:
+        return self.name
 
     @property
     def on_best_iter(self) -> bool:
@@ -40,15 +43,36 @@ class Metric(ABC):
         self.current = (loss := self.custom_function(sample)).item()
         if self.current > self.best:
             self.best = self.current
+            
+        N = self.trainer_state.current.iteration + 1
+        self.total_sum += self.current
+        self.average = self.total_sum / N
+            
         self.trainer_state.tracker.track(
             self.current,
             name=self.name,
             step=self.trainer_state.current.step,
             epoch=self.trainer_state.current.epoch,
-            context={"subset": self.context},
+            context=self.context | {"track": "current"},
         )
+        
+        for value in self.also_track:
+            self.trainer_state.tracker.track(
+                getattr(self, value),
+                name=self.name,
+                step=self.trainer_state.current.step,
+                epoch=self.trainer_state.current.epoch,
+                context=self.context | {"track": value},
+            )
+            
         return loss
 
+    def __repr__(self) -> str:
+        return f"{self.name} [{self.current:5.4f}]"
+
+    def get(self, value: str) -> float:
+        assert (value := value.lower().strip()) in ["best", "current", "total_sum", "average"]
+        return f"{self.name} [{getattr(self, value):5.4f}]"
 
 class Loss(ABC):
     """ """
@@ -57,18 +81,26 @@ class Loss(ABC):
     val: Metric
     device = torch.device(settings.DEVICE)
 
-    def __init__(self, trainer_state: TrainerStateProtocol) -> None:
+    def __init__(self, trainer_state: TrainerStateProtocol, also_track: List[str] = [], y0to1: bool = False) -> None:
         self.train = Metric(
             name=self.__class__.__name__,
-            context="train",
+            context={
+                "subset": "train",
+                "y0to1": y0to1,
+            },
             trainer_state=trainer_state,
             custom_function=self.__call__,
+            also_track=also_track,
         )
         self.val = Metric(
             name=self.__class__.__name__,
-            context="val",
+            context={
+                "subset": "val",
+                "y0to1": y0to1,
+            },
             trainer_state=trainer_state,
             custom_function=self.__call__,
+            also_track=also_track,
         )
 
     @abstractmethod
@@ -79,24 +111,33 @@ class Loss(ABC):
 
 
 class MultiLoss:
-    train: Metric
-    val: Metric
+    _train: Metric
+    _val: Metric
     losses: List[Loss]
 
     def __init__(self, losses: List[Loss]):
         self.losses = losses
-        self.train = Metric(
+        self._train = Metric(
             name="MutliLoss",
-            context="train",
+            context={"subset": "train"},
             trainer_state=losses[0].train.trainer_state,
             custom_function=lambda sample: sum(loss.train(sample) for loss in self.losses),
         )
-        self.val = Metric(
+        self._val = Metric(
             name="MutliLoss",
-            context="val",
+            context={"subset": "val"},
             trainer_state=losses[0].val.trainer_state,
             custom_function=lambda sample: sum(loss.val(sample) for loss in self.losses),
         )
 
     def __repr__(self) -> str:
         return f"MultiLoss({[loss for loss in self.losses]})"
+
+    @property
+    def train(self) -> Metric:
+        return self._train
+    
+    @property
+    def val(self) -> Metric:
+        return self._val
+    

@@ -66,7 +66,6 @@ class Conv1D(torch.nn.Module):
         out += ")"
         return out
 
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self.layers(cloud.features)
         return cloud
@@ -92,7 +91,6 @@ class Conv1DAdapter(torch.nn.Module):
         out += f"kernel_size: {self.kernel_size}), bias: {self.bias})"
         return out
 
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self._conv1dAdapter(cloud.features)
         return cloud

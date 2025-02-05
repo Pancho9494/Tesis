@@ -1,6 +1,11 @@
+# device-specific files
+.aim/
+.vscode/
+
 # Large files
 **/weights/*
 **/raw_data/**
+**/raw/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

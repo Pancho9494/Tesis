@@ -3,7 +3,7 @@ import copy
 from typing import Tuple, Callable
 from LIM.models.PREDATOR.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures.cloud import Cloud
-from debug.decorators import identify_method, timeit
+from debug.decorators import identify_method
 
 class GNN(torch.nn.Module):
     feature_dim: int
@@ -76,10 +76,7 @@ class CrossAttention(torch.nn.Module):
         for layer, temp in zip(self.proj, (query, key, value)):
             temp = layer(temp)
             temp.features = temp.features.view(BATCH_SIZE, self.dim, self.num_heads, -1)
-            
-        # query, key, value = [
-        #     layer(x).view(BATCH_SIZE, self.dim, self.num_heads, -1) for layer, x in zip(self.proj, (query, key, value))
-        # ]
+           
         src_attn = copy.copy(source)
         src_attn.features = self._attention(query.features, key.features, value.features)
         src_attn.features = src_attn.features.contiguous().view(BATCH_SIZE, self.dim * self.num_heads, -1)
@@ -108,14 +105,14 @@ class BottleNeck(torch.nn.Module):
         self.cross_attention = CrossAttention(num_heads=4, feature_dim=256)
         self.feature_projection = torch.nn.Conv1d(in_channels=256, out_channels=256, kernel_size=1, bias=True)
         self.score_projection = torch.nn.Conv1d(in_channels=256, out_channels=1, kernel_size=1, bias=True)
-        self.temperature = torch.exp(torch.nn.Parameter(torch.tensor(-5.0))) + 0.03
+        self.epsilon = torch.nn.Parameter(torch.tensor(-5.0))
         
     def __repr__(self) -> str:
         return "BottleNeck()"
 
     @identify_method
     def forward(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
-        source.tensor  = source.tensor.reshape(1, source.tensor.shape[1], -1)
+        source.tensor = source.tensor.reshape(1, source.tensor.shape[1], -1)
         target.tensor = target.tensor.reshape(1, target.tensor.shape[1], -1)
         source.features, target.features = (
             source.features.reshape(1, -1, source.features.shape[0]),
@@ -128,14 +125,13 @@ class BottleNeck(torch.nn.Module):
 
         return self._merge_features(source, target)
         
-
-
     def _merge_features(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
         def _get_scores(cloud: Cloud) -> torch.Tensor:
             scores = self.score_projection(cloud.features).squeeze(0).transpose(0, 1)
             cloud.features = self.feature_projection(cloud.features).squeeze(0).transpose(0, 1)
             return scores
         
+        temperature = torch.exp(self.epsilon) + 0.03
         source_scores, target_scores = _get_scores(source), _get_scores(target)
         inner_product = torch.matmul(source.features, target.features.transpose(0, 1))
         
@@ -143,7 +139,7 @@ class BottleNeck(torch.nn.Module):
             [
                 source_scores,
                 torch.matmul(
-                    torch.nn.functional.softmax(inner_product / self.temperature, dim=1),
+                    torch.nn.functional.softmax(inner_product / temperature, dim=1),
                     target_scores,
                 ),
                 source.features
@@ -154,12 +150,12 @@ class BottleNeck(torch.nn.Module):
             [
                 target_scores,
                 torch.matmul(
-                    torch.nn.functional.softmax(inner_product.transpose(0, 1) / self.temperature, dim=1), 
+                    torch.nn.functional.softmax(inner_product.transpose(0, 1) / temperature, dim=1), 
                     source_scores,
                 ),
-                target.features
+                target.features,
             ],
-            dim=1
+            dim=1,
         )
         
         return source, target

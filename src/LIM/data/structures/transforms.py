@@ -135,6 +135,8 @@ class Noise(TF):
 
 
 def transform_factory(inputs: Dict[str, Dict[str, Any]]) -> List[torch.nn.Module]:
+    if not inputs:
+        return []
     mappings: Dict[str, TF] = {
         "CENTERZRANDOM": CenterZRandom,
         "DOWNSAMPLE": Downsample,

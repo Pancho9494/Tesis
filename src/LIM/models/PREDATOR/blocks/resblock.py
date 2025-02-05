@@ -26,7 +26,6 @@ class ResBlock_A(torch.nn.Module):
         super(ResBlock_A, self).__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
-        self.skip_connection = torch.tensor([])
         self._leaky_relu = LeakyRelU(negative_slope=0.1)
 
         # These //2 and 4* differ from the values in the paper
@@ -51,7 +50,6 @@ class ResBlock_A(torch.nn.Module):
     def __repr__(self) -> str:
         return f"ResBlock_A(in_dim: {self.in_dim}, out_dim: {self.out_dim})"
 
-    # @identify_method(on=True)
     def forward(self, cloud: Cloud) -> Cloud:
         self.skip_connection = cloud.features
         temp_cloud = copy(cloud)
@@ -89,7 +87,6 @@ class ResBlock_B(torch.nn.Module):
     def __repr__(self) -> str:
         return f"ResBlock_B(in_dim: {self.in_dim}, out_dim: {self.out_dim})"
 
-    # @identify_method(on=True)
     def forward(self, cloud: Cloud) -> Cloud:
         temp_cloud = copy(cloud)
         cloud.features = self.main(cloud).features + self.shortcut(temp_cloud).features

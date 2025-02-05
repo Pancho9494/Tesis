@@ -27,21 +27,23 @@ class Model(BaseSettings):
 
 
 class Transforms(BaseSettings):
-    TRAIN: Dict[str, Dict[str, Any]] = {}
-    VALIDATION: Dict[str, Dict[str, Any]] = {}
+    TRAIN: Optional[Dict[str, Dict[str, Any]]] = {}
+    VALIDATION: Optional[Dict[str, Dict[str, Any]]] = {}
 
 
 class Trainer(BaseSettings):
     BATCH_SIZE: int
     LEARNING_RATE: float
+    WEIGHT_DECAY: float
+    MOMENTUM: float
     EPOCHS: int
     ACCUM_STEPS: int = Field(default=1, ge=1)
     VALIDATION_PERIOD: int
     BACKUP_PERIOD: int
     VALIDATION_SPLIT: float
     MULTIPROCESSING: bool
-    POINTCLOUD_TF: Transforms
-    IMPLICIT_GRID_TF: Transforms
+    POINTCLOUD_TF: Optional[Transforms] = None
+    IMPLICIT_GRID_TF: Optional[Transforms] = None
 
 
 class Settings(BaseSettings):

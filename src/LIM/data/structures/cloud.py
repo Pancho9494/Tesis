@@ -1,7 +1,7 @@
 import numpy as np
 import open3d as o3d
 from pathlib import Path
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Any
 import torch
 import copy
 import matplotlib as mpl
@@ -10,19 +10,16 @@ from config import settings
 import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
 
-np.random.seed(42)
-from debug.decorators import identify_method
-
 
 class Cloud:
-    pcd: o3d.t.geometry.PointCloud
-    _features: torch.Tensor
-    neighbors: torch.Tensor
-    pools: torch.Tensor
-    upsamples: torch.Tensor
     device: torch.device = torch.device(settings.DEVICE)
     o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
 
+    pcd: o3d.t.geometry.PointCloud
+    _features: torch.Tensor
+    neighbors: Optional[torch.Tensor] = None
+    pools: Optional[torch.Tensor] = None
+    upsamples: Optional[torch.Tensor] = None
     subpoints: Optional["Cloud"] = None
     superpoints: Optional["Cloud"] = None
     path: Optional[Path] = None
@@ -35,7 +32,7 @@ class Cloud:
 
     def __repr__(self) -> str:
         out = f"Cloud(Points{[v for v in self.shape]}"
-        out += f", Features{[v for v in self.features.shape]}, {self.device}"
+        out += f", Features{[v for v in self.features.shape]}"
         out += ")"
         return out
 
@@ -50,18 +47,18 @@ class Cloud:
         cls.upsamples = self.upsamples
         return cls
 
+    # =========================================== BUILDERS ===========================================#
     @classmethod
     def from_path(cls, path: Union[Path, str]) -> "Cloud":
         if isinstance(path, str):
             path = Path(path)
 
-        instance = cls()
         if path.suffix.lower() in [".npz", ".npy"]:
             instance = cls.from_arr(np.load(path))
         elif path.suffix.lower() in [".pth"]:
             instance = cls.from_arr(torch.load(path, weights_only=False))
         else:
-            instance.pcd = o3d.t.geometry.PointCloud()
+            instance.pcd = cls(pcd=o3d.t.geometry.PointCloud())
             instance.pcd = o3d.io.read_point_cloud(str(path))
 
         instance.path = path
@@ -69,14 +66,11 @@ class Cloud:
 
     @classmethod
     def from_pcd(cls, pcd: o3d.t.geometry.PointCloud) -> "Cloud":
-        instance = cls()
-        instance.pcd = pcd
-        return instance
+        return cls(pcd=pcd)
 
     @classmethod
     def from_arr(cls, arr: np.ndarray) -> "Cloud":
-        instance = cls()
-        instance.pcd = o3d.t.geometry.PointCloud()
+        instance = cls(pcd=o3d.t.geometry.PointCloud())
         instance.pcd.point.positions = o3d.core.Tensor(
             arr[~np.isnan(arr).any(axis=1)].astype("float32"),  # filter nan points
             o3d.core.float32,
@@ -86,8 +80,7 @@ class Cloud:
 
     @classmethod
     def from_tensor(cls, tens: torch.Tensor) -> "Cloud":
-        instance = cls()
-        instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.o3ddevice))
+        instance = cls(pcd=o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.o3ddevice)))
         instance.pcd.point.positions = o3d.core.Tensor(
             torch.nan_to_num(tens, 0.0).cpu().numpy(),
             o3d.core.Dtype.Float32,
@@ -95,6 +88,7 @@ class Cloud:
         )
         return instance
 
+    # =========================================== PROPERTIES ===========================================#
     @property
     def arr(self) -> np.ndarray:
         return self.pcd.point.positions.cpu().contiguous().numpy().astype(np.float64)
@@ -102,12 +96,6 @@ class Cloud:
     @property
     def tensor(self) -> torch.Tensor:
         return torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(self.device)
-
-    @tensor.setter
-    def tensor(self, value: Union[o3d.core.Tensor, torch.Tensor]) -> None:
-        if isinstance(value, torch.Tensor):
-            value = o3d.core.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(value))
-        self.pcd.point.positions = value
 
     @property
     def shape(self) -> Tuple[int, ...]:
@@ -125,12 +113,19 @@ class Cloud:
 
         return self._features.to(self.device)
 
+    @tensor.setter
+    def tensor(self, value: Union[o3d.core.Tensor, torch.Tensor]) -> None:
+        if isinstance(value, torch.Tensor):
+            value = o3d.core.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(value))
+        self.pcd.point.positions = value
+
     @features.setter
     def features(self, value: Union[np.ndarray, torch.Tensor]) -> None:
         if isinstance(value, np.ndarray):
             value = torch.from_numpy(value)
         self._features = value.to(self.device)
 
+    # =========================================== METHODS ===========================================#
     def show_forwards(self) -> str:
         current = self
         points = []
@@ -261,7 +256,7 @@ class Cloud:
             self.features = self.features.reshape((1, -1, 1))
 
         BATCH_SIZE, NUM_POINTS, N_DIM = self.tensor.shape
-        instance = copy.deepcopy(self)
+        instance = copy.copy(self)
 
         if (NUM_POINTS <= size) or (size == 0):
             if must_squeeze:

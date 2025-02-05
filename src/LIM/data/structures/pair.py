@@ -3,7 +3,6 @@ import numpy as np
 from LIM.data.structures import Cloud
 from typing import Optional, Iterable, Tuple
 import torch
-from debug.decorators import identify_method
 from config import settings
 
 
@@ -13,8 +12,8 @@ class Overlaps:
     device: torch.device = torch.device(settings.DEVICE)
 
     def __init__(self) -> None:
-        self.src = torch.tensor([], device=self.device, requires_grad=False)
-        self.target = torch.tensor([], device=self.device, requires_grad=False)
+        self.src = torch.tensor([], device=self.device, requires_grad=True)
+        self.target = torch.tensor([], device=self.device, requires_grad=True)
 
 
 class Saliencies:
@@ -23,8 +22,8 @@ class Saliencies:
     device: torch.device = torch.device(settings.DEVICE)
 
     def __init__(self) -> None:
-        self.src = torch.tensor([], device=self.device, requires_grad=False)
-        self.target = torch.tensor([], device=self.device, requires_grad=False)
+        self.src = torch.tensor([], device=self.device, requires_grad=True)
+        self.target = torch.tensor([], device=self.device, requires_grad=True)
 
 
 class Correspondences:
@@ -83,19 +82,18 @@ class Pair:
         NO_SUBPOINTS = value.subpoints is None
         NON_EMPTY_FEATURES = len(value.features) > 0
         if _PREDATOR_LAST_LAYER := HAS_SUPERPOINTS and NO_SUBPOINTS and NON_EMPTY_FEATURES:
-            with torch.no_grad():
-                self.overlaps.src = torch.nan_to_num(
-                    torch.clamp(sigmoid(value.features[:, -2]), min=0, max=1),
-                    nan=0.0,
-                    posinf=0.0,
-                    neginf=0.0,
-                )
-                self.saliencies.src = torch.nan_to_num(
-                    torch.clamp(sigmoid(value.features[:, -1]), min=0, max=1),
-                    nan=0.0,
-                    posinf=0.0,
-                    neginf=0.0,
-                )
+            self.overlaps.src = torch.nan_to_num(
+                torch.clamp(sigmoid(value.features[:, -2]), min=0, max=1),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            self.saliencies.src = torch.nan_to_num(
+                torch.clamp(sigmoid(value.features[:, -1]), min=0, max=1),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
             value.features = torch.nn.functional.normalize(value.features[:, :-2], p=2, dim=1)
         self._source = value
 
@@ -111,24 +109,23 @@ class Pair:
         NO_SUBPOINTS = value.subpoints is None
         NON_EMPTY_FEATURES = len(value.features) > 0
         if _PREDATOR_LAST_LAYER := HAS_SUPERPOINTS and NO_SUBPOINTS and NON_EMPTY_FEATURES:
-            with torch.no_grad():
-                self.overlaps.target = torch.nan_to_num(
-                    torch.clamp(sigmoid(value.features[:, -2]), min=0, max=1),
-                    nan=0.0,
-                    posinf=0.0,
-                    neginf=0.0,
-                )
-                self.saliencies.target = torch.nan_to_num(
-                    torch.clamp(sigmoid(value.features[:, -1]), min=0, max=1),
-                    nan=0.0,
-                    posinf=0.0,
-                    neginf=0.0,
-                )
+            self.overlaps.target = torch.nan_to_num(
+                torch.clamp(sigmoid(value.features[:, -2]), min=0, max=1),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            self.saliencies.target = torch.nan_to_num(
+                torch.clamp(sigmoid(value.features[:, -1]), min=0, max=1),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
             value.features = torch.nn.functional.normalize(value.features[:, :-2], p=2, dim=1)
         self._target = value
 
     def __repr__(self) -> str:
-        out = f"Pair({self.source}, {self.target}"
+        out = f"Pair(source={self.source}, target={self.target}"
         out += f", {self.overlap * 100:02.2f}%" if self._overlap is not None else ""
         out += ")"
         return out
@@ -144,7 +141,6 @@ class Pair:
         SEARCH_VOXEL_SIZE = 0.0375
         temp_source = self.source.pcd.to_legacy()
         temp_source.transform(self.GT_tf_matrix)
-        # print(self.GT_tf_matrix)
         foo = self.target.pcd.to_legacy()
         pcd_tree = o3d.geometry.KDTreeFlann(foo)
         correspondences = []
@@ -153,5 +149,5 @@ class Pair:
             for j in indices:
                 correspondences.append([i, j])
 
-        self._correspondences = Correspondences(torch.tensor(correspondences, device=self.device))
+        self._correspondences = Correspondences(torch.tensor(correspondences, device=self.device, requires_grad=False))
         return self._correspondences

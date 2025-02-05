@@ -5,15 +5,11 @@ from LIM.models.PREDATOR.blocks import KPConvNeighbors, ResBlock_A, ResBlock_B, 
 from LIM.models.PREDATOR.blocks.leakyrelu import LeakyRelU
 
 from debug.decorators import identify_method
-from debug.context import inspect_cloud
-
 
 class Encoder(torch.nn.Module):
-    skip_connections: List[torch.Tensor]
-
+    
     def __init__(self) -> None:
         super(Encoder, self).__init__()
-        self.skip_connections = []
         self.block1 = torch.nn.ModuleList(
             [
                 KPConvNeighbors(in_dim=1, out_dim=64),
@@ -50,18 +46,15 @@ class Encoder(torch.nn.Module):
     @identify_method
     def forward(self, cloud: Cloud) -> Tuple[Cloud, List[torch.Tensor]]:
         skip_connections: List[torch.Tensor] = []
-        cloud.tensor, cloud.features = cloud.tensor, cloud.features
 
         NEIGHBOR_RADIUS = [(2**i) * 0.0625 for i in range(4)]
         SAMPLE_DL = [(2**i) * 0.05 for i in range(3)] + [None]
 
         current: Cloud = cloud
-        # inspect_cloud(current)
         for idx, block in enumerate([self.block1, self.block2, self.block3]):
             current.compute_neighbors(NEIGHBOR_RADIUS[idx], SAMPLE_DL[idx])
             for layer in block:
                 current = layer(current)
-            # inspect_cloud(current)
             skip_connections.append(layer.skip_connection)  # TODO: I'm not sure about this solution
 
             current.superpoints.features = current.features.clone()
@@ -70,6 +63,5 @@ class Encoder(torch.nn.Module):
         current.compute_neighbors(NEIGHBOR_RADIUS[-1], SAMPLE_DL[-1])
         for layer in self.block4:
             current = layer(current)
-        # inspect_cloud(current)
 
         return current, skip_connections

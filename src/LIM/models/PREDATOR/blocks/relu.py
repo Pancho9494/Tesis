@@ -12,7 +12,6 @@ class ReLU(torch.nn.Module):
     def __repr__(self) -> str:
         return f"ReLU()"
     
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self._ReLU(cloud.features)
         return cloud

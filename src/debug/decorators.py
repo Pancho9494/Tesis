@@ -19,7 +19,7 @@ min_depth = 9999
 call_depths = []
 
 
-def __current_indentation(callstack: CallStack) -> str:
+def __current_indentation(callstack: CallStack) -> int:
     def __stack_size3a(size=2):
         """Get stack size for caller's frame."""
         frame = sys._getframe(size)
@@ -37,11 +37,12 @@ def __current_indentation(callstack: CallStack) -> str:
     if current_depth not in callstack.call_depths:
         callstack.call_depths.append(current_depth)
 
-    TAB = "\t"
-    return TAB * callstack.call_depths.index(current_depth)
+    return callstack.call_depths.index(current_depth)
 
 
 identify_method_callstack = CallStack()
+
+nested_colors: List[str] = ["green", "yellow", "blue", "red", "cyan"]
 
 
 def identify_method(after_msg: Optional[str] = None, on: bool = DEBUG):
@@ -54,47 +55,39 @@ def identify_method(after_msg: Optional[str] = None, on: bool = DEBUG):
             if not on:
                 return method(self, *args, **kwargs)
 
-            TABS = __current_indentation(identify_method_callstack)
-            msg = f"{TABS}{self}.{method.__name__}(\n"
+            depth = __current_indentation(identify_method_callstack)
+            TABS = "\t" * depth
+            color = nested_colors[depth % len(nested_colors)]
+
+            header = f"{TABS}[bold {color}]{self}[/bold {color}].[italic {color}]{method.__name__}([/italic {color}]"
+            print(header)
+
             signature = inspect.signature(method).bind(self, *args, **kwargs)
             signature.apply_defaults()
 
             for name, value in signature.arguments.items():
                 if name == "self":
                     continue
+                body = f"{TABS}\t[{color}]{name}[/{color}]="
                 if isinstance(value, torch.Tensor):
-                    msg += f"{TABS}\t{name}={value.shape}-> ({value.min()}, {value.max()}),\n"
-                if isinstance(value, List):
-                    if isinstance(value[0], torch.Tensor):
-                        msg += f"{TABS}\t{name}=[{[v.shape for v in value]}]\n"
+                    body += f"{value.shape}-> ({value.min()}, {value.max()}),"
+                elif isinstance(value, List) and isinstance(value[0], torch.Tensor):
+                    body += f"[{[v.shape for v in value]}]"
                 else:
-                    msg += f"{TABS}\t{name}={value},\n"
-            msg += f"{TABS})"
-            print(msg)
+                    body += f"{value},"
+                print(body)
+
             ts = time.time()
             result = method(self, *args, **kwargs)
             te = time.time()
-            print(f"{TABS}{chr(0x21AA)} {te - ts:2.6f} [s] ")
+
+            footer = f"{TABS}[italic {color}])[/italic {color}] -> {te - ts:2.6f} [cyan]\[s][/cyan] "
+            print(footer)
 
             if after_msg is not None:
                 print(f"{TABS}{after_msg}")
             return result
 
         return identify
-
-    return decorator
-
-
-def timeit():
-    def decorator(method: Callable) -> Callable:
-        def time_call(self, *args, **kwargs):
-            ts = time.time()
-            result = method(self, *args, **kwargs)
-            te = time.time()
-
-            print(f"========================= {te - ts:2.6f} s =========================")
-            return result
-
-        return time_call
 
     return decorator

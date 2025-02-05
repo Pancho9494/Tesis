@@ -7,7 +7,6 @@ class NearestUpsample(torch.nn.Module):
     def __init__(self) -> None:
         super(NearestUpsample, self).__init__()
     
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         if len(cloud.subpoints.upsamples) == 0:
             raise "Couldn't find upsamples for cloud"

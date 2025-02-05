@@ -47,6 +47,9 @@ class ThreeDLoMatch(Dataset):
         ), "Provided file has wrong data, all lists in the dict need to have the same length"
 
         print(f"Loaded 3DLoMatch_{file} with {len(self)} point cloud pairs")
+        
+    def __repr__(self) -> str:
+        return "3DLoMatch"
 
     def __len__(self) -> int:
         return len(self.rot_paths)
@@ -71,10 +74,13 @@ class ThreeDLoMatch(Dataset):
 
     @classmethod
     def force_downsample(cls, pair: Pair) -> None:
+        """
+        Keep track of the max size of each pair the computer can handle in order to avoid pytorch OOMs
+        """
         path = pair.source.path[0]
         if (tag := f"{path.parent.name}/{path.stem}") not in cls.downsample_table:
             cls.downsample_table[tag] = 1.0
-        cls.downsample_table[tag] = max(0.1, cls.downsample_table[tag] - 0.1)
+        cls.downsample_table[tag] = max(0.1, cls.downsample_table[tag] - 0.05)
 
     @property
     def collate_fn(self) -> Callable:

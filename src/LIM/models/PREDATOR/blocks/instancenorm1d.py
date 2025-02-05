@@ -14,7 +14,6 @@ class InstanceNorm1D(torch.nn.Module):
     def __repr__(self) -> str:
         return f"InstanceNorm1D(num_features: {self.num_features})"
     
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = self._instancenorm1D(cloud.features)
         return cloud

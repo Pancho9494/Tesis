@@ -9,7 +9,6 @@ class MaxPool(torch.nn.Module):
     def __repr__(self) -> str:
         return "MaxPool()"
 
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud.features = cloud.features.max(dim=-1, keepdim=True)[0]
         return cloud

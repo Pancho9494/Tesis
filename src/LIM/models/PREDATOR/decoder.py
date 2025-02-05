@@ -21,7 +21,7 @@ class Decoder(torch.nn.Module):
         )
 
     def __repr__(self) -> str:
-        return f"Decoder()"
+        return "Decoder()"
 
     @identify_method
     def forward(self, cloud: Cloud, skip_connections: List[torch.Tensor]) -> Cloud:
@@ -31,4 +31,7 @@ class Decoder(torch.nn.Module):
             cloud = block(cloud)
             cloud.subpoints.features = cloud.features
             cloud = cloud.subpoints
+
+        if torch.isnan(cloud.features).any():
+            print("?")
         return cloud

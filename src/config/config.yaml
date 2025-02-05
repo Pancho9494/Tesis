@@ -14,10 +14,12 @@ DEVICE: "cuda"
 
 TRAINER:
     BATCH_SIZE: 1
-    LEARNING_RATE: 1e-4
-    EPOCHS: 1000
+    LEARNING_RATE: 5e-3
+    WEIGHT_DECAY: 1e-6
+    MOMENTUM: 0.98
+    EPOCHS: 48
     ACCUM_STEPS: 1
-    VALIDATION_PERIOD: 100
+    VALIDATION_PERIOD: 1
     BACKUP_PERIOD: 100
     VALIDATION_SPLIT: 0.2
     MULTIPROCESSING: false
@@ -26,18 +28,18 @@ TRAINER:
       TRAIN:
         # CENTERZRANDOM:
         #   BASE_RATIO: 0.5
-        DOWNSAMPLE:
-          N_POINTS: 30000
-        NOISE:
-          NOISE: 0.005
+        # DOWNSAMPLE:
+        #   N_POINTS: 30000
+        # NOISE:
+        #   NOISE: 0.005
 
       VALIDATION:
         # CENTERZRANDOM:
         #   BASE_RATIO: 0.5
         # DOWNSAMPLE:
         #   N_POINTS: 30000
-        NOISE:
-          NOISE: 0.005
+        # NOISE:
+        #   NOISE: 0.005
 
     IMPLICIT_GRID_TF:
       TRAIN:

@@ -24,7 +24,6 @@ class EdgeConv(torch.nn.Module):
     def __repr__(self) -> str:
         return f"EdgeConv(in_dim: {self.in_dim}, out_dim: {self.out_dim})"
 
-    @identify_method
     def forward(self, cloud: Cloud) -> Cloud:
         cloud = self.layers(cloud)
         return cloud
