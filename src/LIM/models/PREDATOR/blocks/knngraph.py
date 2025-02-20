@@ -1,5 +1,6 @@
 import torch
-from LIM.data.structures.cloud import Cloud
+from LIM.data.structures.pcloud import PCloud
+from debug.decorators import identify_method
 
 
 class KNNGraph(torch.nn.Module):
@@ -12,10 +13,11 @@ class KNNGraph(torch.nn.Module):
     def __repr__(self) -> str:
         return f"KNNGraph({self.knn})"
 
-    def forward(self, cloud: Cloud) -> Cloud:
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = cloud.features.squeeze(-1)
         B, C, N = cloud.features.shape
-        dist = self._square_distance(cloud.tensor.transpose(1, 2), cloud.tensor.transpose(1, 2))
+        dist = self._square_distance(cloud.points.transpose(1, 2), cloud.points.transpose(1, 2))
 
         idx = dist.topk(k=self.knn + 1, dim=-1, largest=False, sorted=True)
         idx = idx[1]

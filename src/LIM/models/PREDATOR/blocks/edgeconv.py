@@ -1,9 +1,10 @@
 import torch
 from typing import Optional
 from LIM.models.PREDATOR.blocks import KNNGraph, MaxPool, Conv2D, InstanceNorm2D
-from LIM.models.PREDATOR.blocks.leakyrelu import LeakyRelU
-from LIM.data.structures.cloud import Cloud
+from LIM.models.PREDATOR.blocks.leakyrelu import LeakyReLU
+from LIM.data.structures.pcloud import PCloud
 from debug.decorators import identify_method
+
 
 class EdgeConv(torch.nn.Module):
     in_dim: int
@@ -17,13 +18,14 @@ class EdgeConv(torch.nn.Module):
             KNNGraph(knn=knn) if knn is not None else torch.nn.Identity(),
             Conv2D(in_channels=in_dim, out_channels=out_dim, kernel_size=1, bias=False),
             InstanceNorm2D(num_features=out_dim),
-            LeakyRelU(negative_slope=0.2),
+            LeakyReLU(negative_slope=0.2),
             MaxPool() if maxPool else torch.nn.Identity(),
         )
-    
+
     def __repr__(self) -> str:
         return f"EdgeConv(in_dim: {self.in_dim}, out_dim: {self.out_dim})"
 
-    def forward(self, cloud: Cloud) -> Cloud:
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
         cloud = self.layers(cloud)
         return cloud

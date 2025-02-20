@@ -1,9 +1,11 @@
 import torch
 import copy
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Any
 from LIM.models.PREDATOR.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
-from LIM.data.structures.cloud import Cloud
+from LIM.data.structures import PCloud, Pair
 from debug.decorators import identify_method
+from multimethod import multimethod
+
 
 class GNN(torch.nn.Module):
     feature_dim: int
@@ -14,22 +16,24 @@ class GNN(torch.nn.Module):
         self.edgeconv1 = EdgeConv(in_dim=2 * feature_dim, out_dim=feature_dim, maxPool=True, knn=10)
         self.edgeconv2 = EdgeConv(in_dim=2 * feature_dim, out_dim=2 * feature_dim, maxPool=True, knn=10)
         self.edgeconv3 = EdgeConv(in_dim=4 * feature_dim, out_dim=feature_dim, maxPool=False)
-    
+
     def __repr__(self) -> str:
         return f"GNN(feature_dim: {self.feature_dim})"
 
-    @identify_method(after_msg="\n\n")
-    def forward(self, cloud: Cloud) -> Cloud:
-        def call_and_copy(edgeconv: Callable, cloud: Cloud) -> Tuple[Cloud, Cloud]:
+    # @identify_method(after_msg="\n\n")
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
+        def call_and_copy(edgeconv: Callable, cloud: PCloud) -> Tuple[PCloud, PCloud]:
             return edgeconv(cloud), copy.copy(cloud)
-        
+
         cloud.features = cloud.features.unsqueeze(-1)
         x0 = copy.copy(cloud)
         x1, cloud = call_and_copy(self.edgeconv1, cloud)
         x2, cloud = call_and_copy(self.edgeconv2, cloud)
-        
-        cloud.features = torch.cat((x0.features, x1.features, x2.features), dim=1)
-        cloud = self.edgeconv3(x3 := cloud)
+
+        x3 = copy.copy(cloud)
+        x3.features = torch.cat((x0.features, x1.features, x2.features), dim=1)
+        x3 = self.edgeconv3(x3)
         cloud.features = x3.features.view(cloud.shape[0], -1, cloud.shape[2])
         return cloud
 
@@ -40,8 +44,11 @@ class CrossAttention(torch.nn.Module):
 
     def __init__(self, num_heads: int, feature_dim: int) -> None:
         super(CrossAttention, self).__init__()
-        assert feature_dim % num_heads == 0, f"feature_dim must be divisible by num_heads in CrossAttention, \
+        assert feature_dim % num_heads == 0, (
+            f"feature_dim must be divisible by num_heads in CrossAttention, \
             got {feature_dim} % {num_heads} = {feature_dim % num_heads} != 0"
+        )
+        self.feature_dim = feature_dim
         self.dim = feature_dim // num_heads
         self.num_heads = num_heads
         self.merge = Conv1DAdapter(in_channels=feature_dim, out_channels=feature_dim, kernel_size=1)
@@ -52,11 +59,13 @@ class CrossAttention(torch.nn.Module):
             ReLU(),
             Conv1DAdapter(in_channels=2 * feature_dim, out_channels=feature_dim, kernel_size=1, bias=True),
         )
+        torch.nn.init.constant_(self.mlp[-1]._conv1dAdapter.bias, 0.0)
+
     def __repr__(self) -> str:
-        return f"CrossAttention(dim: {self.dim}, num_heads: {self.num_heads})"
+        return f"CrossAttention(feature_dim: {self.feature_dim}, dim: {self.dim}, num_heads: {self.num_heads})"
 
     @identify_method
-    def forward(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
+    def forward(self, source: PCloud, target: PCloud) -> Tuple[PCloud, PCloud]:
         src_attention = self._pipeline(source, target)
         src_attention.features = torch.cat([source.features, src_attention.features], dim=1)
         src_attention = self.mlp(src_attention)
@@ -69,19 +78,21 @@ class CrossAttention(torch.nn.Module):
 
         return source, target
 
-    def _pipeline(self, source: Cloud, target: Cloud) -> torch.Tensor:
+    @identify_method
+    def _pipeline(self, source: PCloud, target: PCloud) -> torch.Tensor:
         query, key, value = copy.copy(source), copy.copy(target), copy.copy(target)
         BATCH_SIZE = query.features.size(0)
-        
+
         for layer, temp in zip(self.proj, (query, key, value)):
             temp = layer(temp)
             temp.features = temp.features.view(BATCH_SIZE, self.dim, self.num_heads, -1)
-           
+
         src_attn = copy.copy(source)
         src_attn.features = self._attention(query.features, key.features, value.features)
         src_attn.features = src_attn.features.contiguous().view(BATCH_SIZE, self.dim * self.num_heads, -1)
         return self.merge(src_attn)
 
+    @identify_method
     def _attention(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
         """
 
@@ -101,61 +112,129 @@ class CrossAttention(torch.nn.Module):
 class BottleNeck(torch.nn.Module):
     def __init__(self) -> None:
         super(BottleNeck, self).__init__()
-        self.self_attention = GNN(feature_dim=256)
+        self.pre_self_attention = GNN(feature_dim=256)
+        self.post_self_attention = GNN(feature_dim=256)
         self.cross_attention = CrossAttention(num_heads=4, feature_dim=256)
         self.feature_projection = torch.nn.Conv1d(in_channels=256, out_channels=256, kernel_size=1, bias=True)
         self.score_projection = torch.nn.Conv1d(in_channels=256, out_channels=1, kernel_size=1, bias=True)
         self.epsilon = torch.nn.Parameter(torch.tensor(-5.0))
-        
+
     def __repr__(self) -> str:
         return "BottleNeck()"
 
+    @multimethod
+    def forward(self, *args, **kwargs) -> Any: ...
+
+    @multimethod
     @identify_method
-    def forward(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
-        source.tensor = source.tensor.reshape(1, source.tensor.shape[1], -1)
-        target.tensor = target.tensor.reshape(1, target.tensor.shape[1], -1)
+    def forward(self, pair: Pair) -> Pair:
+        pair.mix.points = pair.mix.points.reshape(1, pair.mix.points.shape[1], -1)
+        pair = pair.split()
+        pair.source, pair.target = self.pre_self_attention(pair.source), self.pre_self_attention(pair.target)
+        pair.source, pair.target = self.cross_attention(pair.source, pair.target)
+        pair.source, pair.target = self.post_self_attention(pair.source), self.post_self_attention(pair.target)
+
+        pair.mix.points = torch.cat(tensors=(pair.source.points, pair.target.points), dim=-1)
+        pair.mix.features = torch.cat(tensors=(pair.source.features, pair.target.features), dim=-1)
+        return self._merge_features(pair)
+
+    @multimethod
+    def forward(self, source: PCloud, target: PCloud) -> Tuple[PCloud, PCloud]:
+        source.points, target.points = (
+            source.points.reshape(1, source.points.shape[1], -1),
+            target.points.reshape(1, target.points.shape[1], -1),
+        )
         source.features, target.features = (
             source.features.reshape(1, -1, source.features.shape[0]),
             target.features.reshape(1, -1, target.features.shape[0]),
         )
-        
-        source, target = self.self_attention(source), self.self_attention(target)
+
+        source, target = self.pre_self_attention(source), self.pre_self_attention(target)
         source, target = self.cross_attention(source, target)
-        source, target = self.self_attention(source), self.self_attention(target)
+        source, target = self.post_self_attention(source), self.post_self_attention(target)
 
         return self._merge_features(source, target)
-        
-    def _merge_features(self, source: Cloud, target: Cloud) -> Tuple[Cloud, Cloud]:
-        def _get_scores(cloud: Cloud) -> torch.Tensor:
-            scores = self.score_projection(cloud.features).squeeze(0).transpose(0, 1)
-            cloud.features = self.feature_projection(cloud.features).squeeze(0).transpose(0, 1)
-            return scores
-        
+
+    @multimethod
+    def _merge_features(self, *args, **kwargs) -> Any: ...
+
+    @multimethod
+    @identify_method
+    def _merge_features(self, pair: Pair) -> Pair:
+        feats_c = self.feature_projection(pair.mix.features)
+        scores_c = self.score_projection(feats_c)
+        feats_gnn_norm = torch.nn.functional.normalize(feats_c, p=2, dim=1).squeeze(0).transpose(0, 1)  # [N, C]
+        feats_gnn_raw = feats_c.squeeze(0).transpose(0, 1)
+        scores_c_raw = scores_c.squeeze(0).transpose(0, 1)  # [N, 1]
+
+        split = pair.source.shape[-1]
+        src_feats_gnn, tgt_feats_gnn = feats_gnn_norm[:split], feats_gnn_norm[split:]
+        inner_products = torch.matmul(src_feats_gnn, tgt_feats_gnn.transpose(0, 1))
+
+        src_scores_c, tgt_scores_c = scores_c_raw[:split], scores_c_raw[split:]
+
         temperature = torch.exp(self.epsilon) + 0.03
-        source_scores, target_scores = _get_scores(source), _get_scores(target)
+        scores_saliency = torch.cat(
+            (
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_products / temperature, dim=1),
+                    tgt_scores_c,
+                ),
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_products.transpose(0, 1) / temperature, dim=1),
+                    src_scores_c,
+                ),
+            ),
+            dim=0,
+        )
+        pair.mix.features = torch.cat([scores_c_raw, scores_saliency, feats_gnn_raw], dim=1)
+        return pair
+
+    @multimethod
+    def _merge_features(self, source: PCloud, target: PCloud) -> Tuple[PCloud, PCloud]:
+        feats_c = torch.cat([source.features, target.features], dim=-1)
+        feats_c = self.feature_projection(feats_c)
+        scores_c = self.score_projection(feats_c)
+        feats_gnn_norm = torch.nn.functional.normalize(feats_c, p=2, dim=1).squeeze(0).transpose(0, 1)  # [N, C]
+        feats_gnn_raw = feats_c.squeeze(0).transpose(0, 1)
+        scores_c_raw = scores_c.squeeze(0).transpose(0, 1)  # [N, 1]
+        split = source.features.shape[-1]
+        source.features, target.features = (
+            feats_gnn_norm[:split],
+            feats_gnn_norm[split:],
+        )
         inner_product = torch.matmul(source.features, target.features.transpose(0, 1))
-        
-        source.features = torch.cat(
-            [
-                source_scores,
+        source_scores, target_scores = scores_c_raw[:split], scores_c_raw[split:]
+        temperature = torch.exp(self.epsilon) + 0.03
+        scores_saliency = torch.cat(
+            (
                 torch.matmul(
                     torch.nn.functional.softmax(inner_product / temperature, dim=1),
                     target_scores,
                 ),
-                source.features
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_product.transpose(0, 1) / temperature, dim=1),
+                    source_scores,
+                ),
+            ),
+            dim=0,
+        )
+
+        source.features = torch.cat(
+            [
+                source_scores,
+                scores_saliency[:split],  # target saliency
+                feats_gnn_raw[:split],  # target features
             ],
-            dim=1
+            dim=1,
         )
         target.features = torch.cat(
             [
                 target_scores,
-                torch.matmul(
-                    torch.nn.functional.softmax(inner_product.transpose(0, 1) / temperature, dim=1), 
-                    source_scores,
-                ),
-                target.features,
+                scores_saliency[split:],  # source saliency
+                feats_gnn_raw[split:],  # source features
             ],
             dim=1,
         )
-        
+
         return source, target

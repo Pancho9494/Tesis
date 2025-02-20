@@ -1,4 +1,3 @@
-import numpy as np
 import builtins
 from rich import traceback, pretty, print
 import torch
@@ -22,6 +21,3 @@ def train_predator() -> None:
 
 if __name__ == "__main__":
     train_predator()
-
-
-# class Painter:

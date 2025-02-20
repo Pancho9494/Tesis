@@ -1,9 +1,11 @@
+import aim
 import torch
 import numpy as np
 from typing import Protocol, Tuple
 from LIM.data.structures.pair import Pair
 from LIM.metrics import Loss
-import aim
+from debug.decorators import identify_method
+from sklearn.metrics import precision_recall_fscore_support
 
 
 class TrainerStateProtocol(Protocol):
@@ -56,19 +58,18 @@ class IOU(Loss):
         return iou.mean()
 
 
-
-
 class OverlapLoss(Loss):
     weight: float
 
     def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
-        super().__init__(trainer_state)
-        self.BCELoss = torch.nn.BCEWithLogitsLoss(reduction="none")
+        super().__init__(trainer_state, also_track=["average"])
+        self.BCELoss = torch.nn.BCELoss(reduction="none")
         self.weight = weight
 
     def __repr__(self):
         return f"OverlapLoss(weight={self.weight})"
 
+    @identify_method
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device)
@@ -76,24 +77,20 @@ class OverlapLoss(Loss):
         ground_truth = torch.cat(
             tensors=(
                 (
-                    torch.zeros(pair.overlaps.src.shape[0])
+                    torch.zeros(pair.source.first.points.shape[0])
                     .to(self.device)
                     .index_fill_(dim=0, index=pair.correspondences.source_indices, value=1)
                 ),
                 (
-                    torch.zeros(pair.overlaps.target.shape[0])
+                    torch.zeros(pair.target.first.points.shape[0])
                     .to(self.device)
                     .index_fill_(dim=0, index=pair.correspondences.target_indices, value=1)
                 ),
             ),
             dim=0,
         )
-        overlaps = torch.cat(tensors=(pair.overlaps.src, pair.overlaps.target), dim=0)
-        loss = self.weight * self._weighted_BCELoss(overlaps, ground_truth)
-    
-        if torch.isnan(loss).any():
-            print("?")
-        return loss
+
+        return self.weight * self._weighted_BCELoss(pair.overlaps.mix, ground_truth)
 
     def _weighted_BCELoss(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         """
@@ -109,31 +106,34 @@ class MatchabilityLoss(Loss):
     weight: float = 0.0
 
     def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
-        super().__init__(trainer_state)
-        self.BCELoss = torch.nn.BCEWithLogitsLoss(reduction="none")
+        super().__init__(trainer_state, also_track=["average"])
+        self.BCELoss = torch.nn.BCELoss(reduction="none")
         self.weight = weight
 
     def __repr__(self):
         return f"MatchabilityLoss(weight={self.weight})"
 
+    @identify_method
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device, requires_grad=True)
 
         MATCHABILITY_RADIUS = 0.05
-        saliencies = torch.cat(
-            tensors=(
-                pair.saliencies.src[src_idx := pair.correspondences.source_indices],
-                pair.saliencies.target[tgt_idx := pair.correspondences.target_indices],
-            )
+        src_idx = pair.correspondences.source_indices
+        tgt_idx = pair.correspondences.target_indices
+
+        len_src = len(pair.source.first.points)
+        scores = torch.matmul(
+            pair.mix.features[:len_src][src_idx], pair.mix.features[len_src:][tgt_idx].transpose(0, 1)
         )
-        scores = torch.matmul(pair.source.features[src_idx], pair.target.features[tgt_idx].transpose(0, 1))
         ground_truth = torch.cat(
             tensors=(
                 torch.where(
                     condition=(
                         torch.norm(
-                            pair.source.tensor[src_idx] - pair.target.tensor[tgt_idx][scores.argmax(1)], p=2, dim=1
+                            pair.source.first.points[src_idx] - pair.target.first.points[tgt_idx][scores.argmax(1)],
+                            p=2,
+                            dim=1,
                         )
                         < MATCHABILITY_RADIUS
                     ),
@@ -143,7 +143,9 @@ class MatchabilityLoss(Loss):
                 torch.where(
                     condition=(
                         torch.norm(
-                            pair.target.tensor[tgt_idx] - pair.source.tensor[src_idx][scores.argmax(0)], p=2, dim=1
+                            pair.target.first.points[tgt_idx] - pair.source.first.points[src_idx][scores.argmax(0)],
+                            p=2,
+                            dim=1,
                         )
                         < MATCHABILITY_RADIUS
                     ),
@@ -154,8 +156,13 @@ class MatchabilityLoss(Loss):
             dim=0,
         )
 
-        loss = self.weight * self._weighted_BCELoss(saliencies, ground_truth)
-        return torch.tensor([0.0], requires_grad=True) if torch.isnan(loss).any() else loss
+        src_saliency_scores = pair.saliencies.mix[:len_src]
+        src_saliency_scores = src_saliency_scores[src_idx]
+        tgt_saliency_scores = pair.saliencies.mix[len_src:]
+        tgt_saliency_scores = tgt_saliency_scores[tgt_idx]
+        scores_saliency = torch.cat((src_saliency_scores, tgt_saliency_scores))
+
+        return self.weight * self._weighted_BCELoss(scores_saliency, ground_truth)
 
     def _weighted_BCELoss(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         """
@@ -167,26 +174,28 @@ class MatchabilityLoss(Loss):
         return torch.mean((torch.where(real >= 0.5, (1 - N_NEGATIVE) * loss, N_NEGATIVE * loss)))
 
 
-
 global coords_dist, feats_dist
+
+
 class CircleLoss(Loss):
     weight: float
     POS_RADIUS: float = 0.0375
     SAFE_RADIUS: float = 0.1
     POS_OPTIMAL: float = 0.1
     NEG_OPTIMAL: float = 1.4
-    LOG_SCALE: int = 16
+    LOG_SCALE: int = 24
     POS_MARGIN: float = 0.1
     NEG_MARGIN: float = 1.4
     MAX_POINTS: int = 256
 
     def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
-        super().__init__(trainer_state)
+        super().__init__(trainer_state, also_track=["average"])
         self.weight = weight
 
     def __repr__(self):
         return f"CircleLoss(weight={self.weight})"
 
+    @identify_method
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device, requires_grad=True)
@@ -194,8 +203,8 @@ class CircleLoss(Loss):
         sub_correspondence = pair.correspondences.matrix[
             torch.norm(
                 input=(
-                    pair.source.tensor[pair.correspondences.matrix[:, 0]]
-                    - pair.target.tensor[pair.correspondences.matrix[:, 1]]
+                    pair.source.first.points[pair.correspondences.matrix[:, 0]]
+                    - pair.target.first.points[pair.correspondences.matrix[:, 1]]
                 ),
                 dim=1,
             )
@@ -204,10 +213,11 @@ class CircleLoss(Loss):
         if sub_correspondence.shape[0] > self.MAX_POINTS:
             sub_correspondence = sub_correspondence[torch.randperm(sub_correspondence.shape[0])[: self.MAX_POINTS]]
 
+        len_src = len(pair.source.first.points)
         src_idx, tgt_idx = sub_correspondence[:, 0], sub_correspondence[:, 1]
-        src_pcd, tgt_pcd = pair.source.tensor[src_idx], pair.target.tensor[tgt_idx]
-        src_feats, tgt_feats = pair.source.features[src_idx], pair.target.features[tgt_idx]
-        
+        src_pcd, tgt_pcd = pair.source.first.points[src_idx], pair.target.first.points[tgt_idx]
+        src_feats, tgt_feats = pair.mix.features[:len_src][src_idx], pair.mix.features[len_src:][tgt_idx]
+
         global coords_dist, feats_dist
         coords_dist = torch.sqrt(self._square_distance(src_pcd[None, :, :], tgt_pcd[None, :, :]).squeeze(0))
         feats_dist = torch.sqrt(
@@ -241,11 +251,8 @@ class CircleLoss(Loss):
 
         circle_loss = (loss_row[row_sel].mean() + loss_col[col_sel].mean()) / 2
         loss = self.weight * circle_loss
-    
-        if torch.isnan(loss).any():
-            print("?")
         return loss
-    
+
     def _square_distance(self, src, dst, normalised=False):
         """
         Calculate Euclid distance between each two points.
@@ -255,19 +262,30 @@ class CircleLoss(Loss):
         Returns:
             dist: per-point square distance, [B, N, M]
         """
+        B, N, _ = src.shape
+        _, M, _ = dst.shape
         dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
-        dist += 2 if normalised else torch.sum(src**2, dim=-1)[:, :, None] + torch.sum(dst**2, dim=-1)[:, None, :]
-        return torch.clamp(dist, min=1e-12, max=None)
+        if normalised:
+            dist += 2
+        else:
+            dist += torch.sum(src**2, dim=-1)[:, :, None]
+            dist += torch.sum(dst**2, dim=-1)[:, None, :]
+
+        dist = torch.clamp(dist, min=1e-12, max=None)
+        return dist
+
 
 class FeatureMatchRecall(Loss):
+    MAX_POINTS: int = 256
     POS_RADIUS: float = 0.0375
-    
+
     def __init__(self, trainer_state: TrainerStateProtocol) -> None:
         super().__init__(trainer_state, y0to1=True, also_track=["average"])
-        
+
     def __repr__(self) -> str:
         return "FeatureMatchRecal()"
-    
+
+    @identify_method
     def __call__(self, sample: Pair) -> torch.Tensor:
         global coords_dist, feats_dist
         pos_mask = coords_dist < self.POS_RADIUS
@@ -279,3 +297,24 @@ class FeatureMatchRecall(Loss):
         if torch.isnan(recall).any():
             print("?")
         return recall
+
+    def _square_distance(self, src, dst, normalised=False):
+        """
+        Calculate Euclid distance between each two points.
+        Args:
+            src: source points, [B, N, C]
+            dst: target points, [B, M, C]
+        Returns:
+            dist: per-point square distance, [B, N, M]
+        """
+        B, N, _ = src.shape
+        _, M, _ = dst.shape
+        dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
+        if normalised:
+            dist += 2
+        else:
+            dist += torch.sum(src**2, dim=-1)[:, :, None]
+            dist += torch.sum(dst**2, dim=-1)[:, None, :]
+
+        dist = torch.clamp(dist, min=1e-12, max=None)
+        return dist

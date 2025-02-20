@@ -1,5 +1,5 @@
 from LIM.models.IAE.decoder import LocalDecoder
-from LIM.data.structures.cloud import Cloud
+from LIM.data.structures.pcloud import Cloud
 import torch
 from config import settings
 from submodules.IAE.src.encoder.unet3d import UNet3D
@@ -53,11 +53,9 @@ class IAE(torch.nn.Module):
         """
         latent_vector = self.encoder(cloud)
         foo = self.testencoder(cloud)
-        print(foo)
-
-        feature_grid = self._generate_grid_features(cloud.tensor, latent_vector)
+        feature_grid = self._generate_grid_features(cloud.points, latent_vector)
         feature_grid = self.unet3d(feature_grid)
-        predicted_df = self.decoder(implicit.tensor, feature_grid)
+        predicted_df = self.decoder(implicit.points, feature_grid)
         return predicted_df
 
     def _generate_grid_features(self, points: torch.Tensor, features: torch.Tensor) -> torch.Tensor:

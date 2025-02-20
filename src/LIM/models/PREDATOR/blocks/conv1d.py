@@ -1,22 +1,8 @@
 import torch
-from LIM.data.structures import Cloud
+from LIM.data.structures import PCloud
+from LIM.models.PREDATOR.blocks import BatchNorm
 from debug.decorators import identify_method
 from config import settings
-
-
-class BatchNorm(torch.nn.Module):
-    in_dim: int
-
-    def __init__(self, in_dim: int, momentum: float) -> None:
-        super(BatchNorm, self).__init__()
-        self.in_dim = in_dim
-        self._batch_norm = torch.nn.InstanceNorm1d(in_dim, momentum=momentum)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.unsqueeze(2).transpose(0, 2)
-        x = self._batch_norm(x)
-        x = x.transpose(0, 2).squeeze(2)
-        return x
 
 
 class Bias(torch.nn.Module):
@@ -66,7 +52,8 @@ class Conv1D(torch.nn.Module):
         out += ")"
         return out
 
-    def forward(self, cloud: Cloud) -> Cloud:
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = self.layers(cloud.features)
         return cloud
 
@@ -78,7 +65,9 @@ class Conv1DAdapter(torch.nn.Module):
     bias: bool
     _conv1dAdapter: torch.nn.Module
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, bias: bool = True) -> None:
+    def __init__(
+        self, in_channels: int, out_channels: int, kernel_size: int, bias: bool = True, debug_mode: bool = False
+    ) -> None:
         super(Conv1DAdapter, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -86,11 +75,18 @@ class Conv1DAdapter(torch.nn.Module):
         self.bias = bias
         self._conv1dAdapter = torch.nn.Conv1d(in_channels, out_channels, kernel_size, bias=bias)
 
+        self.debug_mode = debug_mode
+
     def __repr__(self) -> str:
         out = f"Conv1DAdapter(in_channels: {self.in_channels}, out_channels: {self.out_channels}, "
         out += f"kernel_size: {self.kernel_size}), bias: {self.bias})"
         return out
 
-    def forward(self, cloud: Cloud) -> Cloud:
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
+        if self.debug_mode:
+            cloud.features = cloud.features.transpose(0, 1).unsqueeze(0)  # [1, C, N]
         cloud.features = self._conv1dAdapter(cloud.features)
+        if self.debug_mode:
+            cloud.features = cloud.features.transpose(1, 2).squeeze(0)
         return cloud

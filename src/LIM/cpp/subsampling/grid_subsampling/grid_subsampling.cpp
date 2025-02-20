@@ -135,40 +135,33 @@ void batch_grid_subsampling(std::vector<PointXYZ>& original_points,
 	// Loop over batches
 	// *****************
 
-	std::vector<PointXYZ> b_o_points;
-	std::vector<float> b_o_features;
-	std::vector<int> b_o_classes;
-	std::vector<PointXYZ> b_s_points;
-	std::vector<float> b_s_features;
-	std::vector<int> b_s_classes;
-	for (b = 0; b < original_batches.size(); b++) {
+
+	for (b = 0; b < original_batches.size(); b++)
+	{
 
 	    // Extract batch points features and labels
-		b_o_points.resize(original_batches[b]);
-	    std::copy(
-			original_points.begin () + sum_b,
-			original_points.begin () + sum_b + original_batches[b],
-			b_o_points.begin()
-		);
+	    std::vector<PointXYZ> b_o_points = std::vector<PointXYZ>(original_points.begin () + sum_b,
+	                                                   original_points.begin () + sum_b + original_batches[b]);
 
-        if (original_features.size() > 0) {
-			b_o_features.resize(original_batches[b] * fdim);
-            std::copy(
-				original_features.begin () + sum_b * fdim,
-                original_features.begin () + (sum_b + original_batches[b]) * fdim,
-				b_o_features.begin()
-			);
+        std::vector<float> b_o_features;
+        if (original_features.size() > 0)
+        {
+            b_o_features = std::vector<float>(original_features.begin () + sum_b * fdim,
+                                         original_features.begin () + (sum_b + original_batches[b]) * fdim);
 	    }
 
-        if (original_classes.size() > 0) {
-			b_o_classes.resize(original_batches[b] * ldim);
-            std::copy(
-				original_classes.begin () + sum_b * ldim,
-				original_classes.begin () + sum_b + original_batches[b] * ldim,
-				b_o_classes.begin()
-			);
+	    std::vector<int> b_o_classes;
+        if (original_classes.size() > 0)
+        {
+            b_o_classes = std::vector<int>(original_classes.begin () + sum_b * ldim,
+                                      original_classes.begin () + sum_b + original_batches[b] * ldim);
 	    }
 
+
+        // Create result containers
+        std::vector<PointXYZ> b_s_points;
+        std::vector<float> b_s_features;
+        std::vector<int> b_s_classes;
 
         // Compute subsampling on current batch
         grid_subsampling(b_o_points,

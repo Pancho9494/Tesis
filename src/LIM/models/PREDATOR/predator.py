@@ -1,29 +1,36 @@
 import torch
 from LIM.data.structures.pair import Pair
 from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
+from LIM.models.PREDATOR.original_encoder import EncoderAdapter
+from LIM.models.PREDATOR.original_bottleneck import BottleneckAdapter
+from LIM.models.PREDATOR.original_decoder import DecoderAdapter
 from debug.decorators import identify_method
+from debug.context import inspect_cloud, inspect_tensor
+from multimethod import multimethod
+from typing import Any
 
 
 class Predator(torch.nn.Module):
     def __init__(self) -> None:
         super(Predator, self).__init__()
         self.encoder = Encoder()
+        # self.encoder = EncoderAdapter()
         self.bottleneck = BottleNeck()
+        # self.bottleneck = BottleneckAdapter()
         self.decoder = Decoder()
-        
+        # self.decoder = DecoderAdapter()
+
     def __repr__(self) -> str:
         return f"Predator({self.encoder}, {self.bottleneck}, {self.decoder})"
 
+    @multimethod
+    def forward(self, *args, **kwargs) -> Any: ...
+
     @identify_method
+    @multimethod
     def forward(self, pair: Pair) -> Pair:
-        (source, source_skip), (target, target_skip) = self.encoder(pair.source), self.encoder(pair.target)
-        source, target = self.bottleneck(source, target)
-        source, target = self.decoder(source, source_skip), self.decoder(target, target_skip)
-
-        src, tgt = source.superpoints, target.superpoints
-        while (src is not None) and (tgt is not None):
-            src.features, tgt.features = src.features.detach(), tgt.features.detach()
-            src, tgt = src.superpoints, tgt.superpoints
-
-        pair.source, pair.target = source, target
+        pair.join()
+        pair, skip_connections = self.encoder(pair)
+        pair = self.bottleneck(pair)
+        pair = self.decoder(pair, skip_connections)
         return pair

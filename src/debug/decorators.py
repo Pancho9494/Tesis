@@ -56,7 +56,7 @@ def identify_method(after_msg: Optional[str] = None, on: bool = DEBUG):
                 return method(self, *args, **kwargs)
 
             depth = __current_indentation(identify_method_callstack)
-            TABS = "\t" * depth
+            TABS = "    " * depth
             color = nested_colors[depth % len(nested_colors)]
 
             header = f"{TABS}[bold {color}]{self}[/bold {color}].[italic {color}]{method.__name__}([/italic {color}]"

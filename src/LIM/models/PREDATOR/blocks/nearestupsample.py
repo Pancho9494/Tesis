@@ -1,16 +1,17 @@
 import torch
-from LIM.data.structures.cloud import Cloud
+from LIM.data.structures.pcloud import PCloud
 from debug.decorators import identify_method
 
-class NearestUpsample(torch.nn.Module):
 
+class NearestUpsample(torch.nn.Module):
     def __init__(self) -> None:
         super(NearestUpsample, self).__init__()
-    
-    def forward(self, cloud: Cloud) -> Cloud:
-        if len(cloud.subpoints.upsamples) == 0:
+
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
+        if cloud._sub.upsamples is None:
             raise "Couldn't find upsamples for cloud"
-        cloud.features = self._closest_pool(cloud.features, cloud.subpoints.upsamples)
+        cloud.features = self._closest_pool(cloud.features, cloud._sub.upsamples)
         return cloud
 
     def _closest_pool(self, features: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:

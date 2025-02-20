@@ -1,15 +1,16 @@
 import torch
-from LIM.data.structures import Cloud
+from LIM.data.structures import PCloud
 from debug.decorators import identify_method
+
 
 class MaxPool(torch.nn.Module):
     def __init__(self) -> None:
         super(MaxPool, self).__init__()
-    
+
     def __repr__(self) -> str:
         return "MaxPool()"
 
-    def forward(self, cloud: Cloud) -> Cloud:
+    def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = cloud.features.max(dim=-1, keepdim=True)[0]
         return cloud
 
@@ -18,8 +19,8 @@ class MaxPoolNeighbors(torch.nn.Module):
     def __init__(self) -> None:
         super(MaxPoolNeighbors, self).__init__()
 
-    # @identify_method
-    def forward(self, cloud: Cloud) -> Cloud:
+    @identify_method
+    def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = torch.cat((cloud.features, torch.zeros_like(cloud.features[:1, :])), 0)
         cloud.features, _ = torch.max(self._gather(cloud.features, cloud.pools), dim=1)
         return cloud

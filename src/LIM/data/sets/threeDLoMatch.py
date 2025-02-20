@@ -1,15 +1,15 @@
 import torch
 import torchvision
 from pathlib import Path
-from torch.utils.data import Dataset
 from typing import List, Optional, Callable, Dict
 import pickle
 import numpy as np
-from LIM.data.structures.cloud import Cloud, collate_cloud
+from LIM.data.structures.pcloud import PCloud, collate_cloud, Downsampler
 from LIM.data.structures.pair import Pair
+from LIM.data.sets.datasetI import CloudDatasetsI
 
 
-class ThreeDLoMatch(Dataset):
+class ThreeDLoMatch(CloudDatasetsI):
     """
     Class that represents the 3DLoMatch dataset
 
@@ -18,49 +18,28 @@ class ThreeDLoMatch(Dataset):
 
     """
 
-    dir: Path
+    dir: Path = Path("./src/LIM/data/raw/3DLoMatch/")
+    downsample_table: Dict[str, float] = {}
+
     src_paths: List[Path]
     tgt_paths: List[Path]
     rot_paths: List[np.ndarray]
     trans_paths: List[np.ndarray]
     overlap_paths: List[Path]
-    downsample_table: Dict[str, float] = {}
 
-    def __init__(self) -> None:
-        self.dir = Path("./src/LIM/data/raw/3DLoMatch/")
-        file = "train_info"
-        with open(self.dir / f"{file}.pkl", "rb") as f:
-            info = pickle.load(f)
-
-        self.src_paths = [self.dir / Path(p) for p in info["src"]]
-        self.tgt_paths = [self.dir / Path(p) for p in info["tgt"]]
-        self.rot_paths = info["rot"]
-        self.trans_paths = info["trans"]
-        self.overlap_paths = info["overlap"]
-
-        assert (
-            len(self.src_paths)
-            == len(self.tgt_paths)
-            == len(self.rot_paths)
-            == len(self.trans_paths)
-            == len(self.overlap_paths)
-        ), "Provided file has wrong data, all lists in the dict need to have the same length"
-
-        print(f"Loaded 3DLoMatch_{file} with {len(self)} point cloud pairs")
-        
     def __repr__(self) -> str:
-        return "3DLoMatch"
+        return "3DLoMatch()"
 
     def __len__(self) -> int:
-        return len(self.rot_paths)
+        return len(self.src_paths)
 
     def __getitem__(self, idx: int) -> Pair:
-        src = Cloud.from_path(self.src_paths[idx])
-        target = Cloud.from_path(self.tgt_paths[idx])
+        src = PCloud.from_path(self.src_paths[idx])
+        target = PCloud.from_path(self.tgt_paths[idx])
 
         if (tag := f"{src.path.parent.name}/{src.path.stem}") in self.downsample_table:
-            src = src.downsample(int(self.downsample_table[tag] * len(src)), Cloud.DOWNSAMPLE_MODE.RANDOM)
-            target = target.downsample(int(self.downsample_table[tag] * len(target)), Cloud.DOWNSAMPLE_MODE.RANDOM)
+            src = Downsampler(size=int(self.downsample_table[tag] * len(src)))(src)
+            target = Downsampler(size=int(self.downsample_table[tag] * len(target)))(target)
 
         ground_truth = np.eye(4)
         ground_truth[:3, :3] = self.rot_paths[idx]
@@ -72,15 +51,38 @@ class ThreeDLoMatch(Dataset):
         pair.correspondences
         return pair
 
+    def __parse_info(self, info: Dict) -> "ThreeDLoMatch":
+        self.src_paths = [self.dir / Path(p) for p in info["src"]]
+        self.tgt_paths = [self.dir / Path(p) for p in info["tgt"]]
+        self.rot_paths = info["rot"]
+        self.trans_paths = info["trans"]
+        self.overlap_paths = info["overlap"]
+        return self
+
     @classmethod
-    def force_downsample(cls, pair: Pair) -> None:
+    def new_instance(cls, info_path: str) -> "ThreeDLoMatch":
+        instance = cls()
+        with open(cls.dir / info_path, "rb") as f:
+            info = pickle.load(f)
+        return instance.__parse_info(info)
+
+    def train_set(self) -> "ThreeDLoMatch":
+        return ThreeDLoMatch.new_instance(info_path="train_info.pkl")
+
+    def val_set(self) -> "ThreeDLoMatch":
+        return ThreeDLoMatch.new_instance(info_path="val_info.pkl")
+
+    def test_set(self) -> "ThreeDLoMatch":
+        return ThreeDLoMatch.new_instance(info_path="test_info.pkl")
+
+    def force_downsample(self, pair: Pair) -> None:
         """
         Keep track of the max size of each pair the computer can handle in order to avoid pytorch OOMs
         """
         path = pair.source.path[0]
-        if (tag := f"{path.parent.name}/{path.stem}") not in cls.downsample_table:
-            cls.downsample_table[tag] = 1.0
-        cls.downsample_table[tag] = max(0.1, cls.downsample_table[tag] - 0.05)
+        if (tag := f"{path.parent.name}/{path.stem}") not in self.downsample_table:
+            self.downsample_table[tag] = 1.0
+        self.downsample_table[tag] = max(0.1, self.downsample_table[tag] - 0.05)
 
     @property
     def collate_fn(self) -> Callable:
@@ -101,8 +103,8 @@ def collate_3dmatch(batch: List[Pair], tf_pipeline: Optional[List[torch.nn.Modul
         tf = torchvision.transforms.Compose(tf_pipeline)
         source_batch, target_batch = tf(source_batch), tf(target_batch)
 
-    source_batch.tensor = source_batch.tensor.reshape(-1, 3)
+    source_batch.points = source_batch.points.reshape(-1, 3)
     source_batch.features = source_batch.features.reshape(-1, 1)
-    target_batch.tensor = target_batch.tensor.reshape(-1, 3)
+    target_batch.points = target_batch.points.reshape(-1, 3)
     target_batch.features = target_batch.features.reshape(-1, 1)
     return Pair(source=source_batch, target=target_batch, GT_tf_matrix=np.squeeze(GT_tf_batch, axis=0))

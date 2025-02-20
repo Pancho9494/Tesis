@@ -1,5 +1,5 @@
 import torch
-from LIM.data.structures.cloud import Cloud
+from LIM.data.structures.pcloud import Cloud
 from torch.nn import (
     BatchNorm1d,
     BatchNorm2d,
@@ -61,7 +61,7 @@ class DGCNN(torch.nn.Module):
         )
 
     def forward(self, cloud: Cloud) -> torch.Tensor:
-        features = cloud.tensor.permute(0, 2, 1).contiguous()
+        features = cloud.points.permute(0, 2, 1).contiguous()
         BATCH_SIZE, NUM_DIMS, NUM_POINTS = features.size()
 
         features = self._get_graph_feature(features)

@@ -1,3 +1,4 @@
+from .batchnorm import BatchNorm
 from .conv1d import Conv1D, Conv1DAdapter
 from .conv2d import Conv2D
 from .instancenorm1d import InstanceNorm1D
@@ -8,4 +9,4 @@ from .resblock import ResBlock_A, ResBlock_B
 from .knngraph import KNNGraph
 from .maxpool import MaxPool
 from .edgeconv import EdgeConv
-from .leakyrelu import LeakyRelU
+from .leakyrelu import LeakyReLU

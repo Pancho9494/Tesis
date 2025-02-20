@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 import zipfile
 from typing import List, Tuple, Optional, Callable
-from LIM.data.structures.cloud import Cloud, collate_cloud
+from LIM.data.structures.pcloud import PCloud, collate_cloud
 from LIM.data.sets.datasetI import CloudDatasetsI
 import torchvision
 import torch
@@ -56,12 +56,12 @@ class ScanNet(CloudDatasetsI):
     def __len__(self) -> int:
         return len(self.scenes)
 
-    def __getitem__(self, idx: int) -> Tuple[Optional[Cloud], Optional[Cloud]]:
+    def __getitem__(self, idx: int) -> Tuple[Optional[PCloud], Optional[PCloud]]:
         def __load_npz(path: Path) -> np.ndarray:
             return np.load(str(path))
 
-        cloud: Optional[Cloud] = None
-        implicit: Optional[Cloud] = None
+        cloud: Optional[PCloud] = None
+        implicit: Optional[PCloud] = None
 
         scene = self.scenes[idx]
         sub = random.choice(list((scene / "pointcloud/").iterdir()))
@@ -71,9 +71,9 @@ class ScanNet(CloudDatasetsI):
         future2 = executor.submit(__load_npz, scene / f"points_iou/points_iou_{sub_idx:02d}.npz")
 
         pointcloud_file, iou_file = future1.result(), future2.result()
-        cloud = Cloud.from_arr(pointcloud_file["points"].astype(np.float32))
+        cloud = PCloud.from_arr(pointcloud_file["points"].astype(np.float32))
         cloud.path = scene / f"pointcloud/pointcloud_{sub_idx:02d}.npz"
-        implicit = Cloud.from_arr(iou_file["points"].astype(np.float32))
+        implicit = PCloud.from_arr(iou_file["points"].astype(np.float32))
         implicit.features = iou_file["df_value"].astype(np.float32)
         implicit.path = scene / f"points_iou/points_iou_{sub_idx:02d}.npz"
         return cloud, implicit
@@ -110,10 +110,10 @@ class ScanNet(CloudDatasetsI):
 
 
 def collate_scannet(
-    batch: List[Tuple[Optional[Cloud], Optional[Cloud]]],
+    batch: List[Tuple[Optional[PCloud], Optional[PCloud]]],
     cloud_tf: Optional[List[torch.nn.Module]],
     implicit_tf: Optional[List[torch.nn.Module]],
-) -> Tuple[Cloud, Cloud]:
+) -> Tuple[PCloud, PCloud]:
     clouds, implicits = [], []
     for cloud, implicit in batch:
         clouds.append(cloud)

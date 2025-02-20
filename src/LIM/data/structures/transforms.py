@@ -1,10 +1,7 @@
 import torch
-from LIM.data.structures.cloud import Cloud
-import numpy as np
+from LIM.data.structures.pcloud import PCloud, Downsampler
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List
-
-np.random.seed(42)
 
 
 class TF(torch.nn.Module, ABC):
@@ -16,7 +13,7 @@ class TF(torch.nn.Module, ABC):
     def __repr__(self) -> str: ...
 
     @abstractmethod
-    def forward(self, input: Cloud) -> Cloud: ...
+    def forward(self, input: PCloud) -> PCloud: ...
 
 
 class BreakSymmetry(TF):
@@ -29,12 +26,12 @@ class BreakSymmetry(TF):
     def __repr__(self) -> str:
         return f"BreakSymmetry(std_dev={self.std_dev:0.4f})"
 
-    def forward(self, input: Cloud) -> Cloud:
+    def forward(self, input: PCloud) -> PCloud:
         """
         Applies only to the coordinates, not the features
         """
-        input.tensor = torch.add(
-            input.tensor, torch.mul(self.std_dev, torch.rand(input.tensor.shape, device=input.device))
+        input.points = torch.add(
+            input.points, torch.mul(self.std_dev, torch.rand(input.points.shape, device=input.device))
         )
         return input
 
@@ -49,7 +46,7 @@ class CenterZRandom(TF):
     def __repr__(self) -> str:
         return f"CenterZRandom(ratio={self.ratio:0.4f})"
 
-    def forward(self, input: Cloud) -> Cloud:
+    def forward(self, input: PCloud) -> PCloud:
         """
         Marks the points to be deleted as nan, then they are removed in downsample, so this transformation
         must be called after dowsnample
@@ -57,7 +54,7 @@ class CenterZRandom(TF):
         BATCH_SIZE, N_POINTS, N_DIM = input.shape
         if BATCH_SIZE > 1:
             return input
-        points = input.tensor
+        points = input.points
         random_ratio = 0.5 * torch.rand(BATCH_SIZE).to(input.device)
 
         min_x, _ = torch.min(points[:, :, 0], dim=1)
@@ -82,7 +79,7 @@ class CenterZRandom(TF):
         mask_y = (points[:, :, 1] > start_y) & (points[:, :, 1] < (start_y + remove_size_y))
         crop_mask = mask_x & mask_y
 
-        input.tensor[crop_mask] = float("nan")
+        input.points[crop_mask] = float("nan")
         input.features[crop_mask] = float("nan")
 
         return input
@@ -98,7 +95,7 @@ class Downsample(TF):
     def __repr__(self) -> str:
         return f"Downsample(n_points={self.n_points})"
 
-    def forward(self, input: Cloud) -> Cloud:
+    def forward(self, input: PCloud) -> PCloud:
         """
         Removes points with nan values and then downsamples to the desired size
         Applies to every tensor stored in the input: coordinates, features, colors and normals
@@ -108,15 +105,15 @@ class Downsample(TF):
         points = []
         features = []
         for idx in range(BATCH_SIZE):
-            batch_p = input.tensor[idx]
+            batch_p = input.points[idx]
             batch_f = input.features[idx]
             points.append(batch_p[~torch.isnan(batch_p).any(dim=1)])
             features.append(batch_f[~torch.isnan(batch_f).any(dim=1)])
 
-        input.tensor = torch.stack(points, dim=0)
+        input.points = torch.stack(points, dim=0)
         input.features = torch.stack(features, dim=0)
 
-        return input.downsample(self.n_points, Cloud.DOWNSAMPLE_MODE.RANDOM)
+        return Downsampler(size=self.n_ponits, mode=Downsampler.Mode.RANDOM)(input)
 
 
 class Noise(TF):
@@ -129,8 +126,8 @@ class Noise(TF):
     def __repr__(self) -> str:
         return f"Noise(noise={self.noise:0.4f})"
 
-    def forward(self, input: Cloud) -> Cloud:
-        input.tensor = torch.add(input.tensor, torch.mul(self.noise, torch.rand_like(input.tensor)))
+    def forward(self, input: PCloud) -> PCloud:
+        input.points = torch.add(input.points, torch.mul(self.noise, torch.rand_like(input.points)))
         return input
 
 

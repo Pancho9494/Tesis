@@ -8,7 +8,7 @@ import torch
 from LIM.models.IAE.blocks import ConvBlock, ResidualBlock, UnaryBlock, LastUnaryBlock, nearest_upsample
 import submodules.KPConv.cpp_wrappers.cpp_subsampling.grid_subsampling as cpp_subsampling
 import submodules.KPConv.cpp_wrappers.cpp_neighbors.radius_neighbors as cpp_neighbors
-from LIM.data.structures.cloud import Cloud
+from LIM.data.structures.pcloud import Cloud
 from typing import Tuple, List
 from config import settings
 

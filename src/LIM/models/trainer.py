@@ -7,12 +7,23 @@ import gc
 import multiprocessing as mp
 from pathlib import Path
 import torch
-from typing import Dict, Any, Union, Tuple, Callable
+from typing import Dict, Any, Union, Tuple, Callable, List, Optional
+
+import torch.utils.data.dataloader
 
 from config import settings
-from LIM.data.structures import Cloud, transform_factory, Pair
+from LIM.data.structures import PCloud, Pair
 from LIM.data.sets import CloudDatasetsI
-from LIM.metrics import MultiLoss, Loss, L1Loss, IOU, CircleLoss, OverlapLoss, MatchabilityLoss, FeatureMatchRecall
+from LIM.metrics import (
+    MultiLoss,
+    Loss,
+    L1Loss,
+    IOU,
+    CircleLoss,
+    OverlapLoss,
+    MatchabilityLoss,
+    FeatureMatchRecall,
+)
 import functools
 
 
@@ -22,50 +33,45 @@ def handle_OOM(func: Callable) -> bool:
         try:
             func(*args, **kwargs)
             return True
-        except RuntimeError as e:
-            print(e)
+        except RuntimeError:
+            print("Cuda OOM! ", end="")
             return False
+
     return inner
 
 
-class BaseTrainer(ABC):
+@dataclass
+class RunState:
     @dataclass
-    class RunState:
-        @dataclass
-        class Current:
-            epoch: int = field(default=0)
-            step: int = field(default=0)
-            iteration: int = field(default=0)
-            best_model: Dict[str, Any] = field(default_factory=dict)
-
-        tracker: aim.Run = field(default_factory=aim.Run)
-        current: Current = field(default_factory=Current)
-        
-        def __repr__(self):
-            return (
-                f"State(Aim.Run({self.tracker.repo.path}), Current("
-                + f"epoch={self.current.epoch}, "
-                + f"step={self.current.step}, "
-                + f"iteration={self.current.iteration}))"
-            )
-
+    class Current:
+        iteration: int = field(default=0)
+        epoch: int = field(default=0)
+        setp: int = field(default=0)
+        best_model: Dict[str, Any] = field(default_factory=dict)
+        on_best_iter: bool = False
 
         @property
-        def on_first_step(self) -> bool:
-            return self.current.step == 0
+        def log_header(self) -> str:
+            return f"Epoch[{self.epoch:02d}]" + f"Step[{self.step:02d}]" + f"Iter[{self.iteration:02d}]"
 
-        @property
-        def on_validation_step(self) -> bool:
-            return self.current.step % settings.TRAINER.VALIDATION_PERIOD == 0
+    train: Current = field(default_factory=Current)
+    val: Current = field(default_factory=Current)
+    tracker: aim.Run = field(default_factory=aim.Run)
 
-        @property
-        def on_accumulation_step(self) -> bool:
-            return (self.current.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
+    @property
+    def on_first_step(self) -> bool:
+        return self.train.step == 0
 
-        @property
-        def on_backup_step(self) -> bool:
-            return self.current.step % settings.TRAINER.BACKUP_PERIOD == 0
+    @property
+    def on_accumulation_step(self) -> bool:
+        return (self.train.step + 1) % settings.TRAINER.ACCUM_STEPS == 0
 
+    @property
+    def on_backup_step(self) -> bool:
+        return self.train.step % settings.TRAINER.BACKUP_PERIOD == 0
+
+
+class BaseTrainer(ABC):
     device: torch.device = torch.device(settings.DEVICE)
     state: RunState
     model: torch.nn.Module
@@ -73,82 +79,98 @@ class BaseTrainer(ABC):
     dataset: CloudDatasetsI
     optimizer: torch.optim.Optimizer
     scheduler: torch.optim.lr_scheduler
-    scaler: torch.amp.GradScaler
 
     def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         self.model = model.to(self.device)
         self.dataset = dataset
-        # self.optimizer = torch.optim.Adam(
-        #     model.parameters(),
-        #     lr=settings.TRAINER.LEARNING_RATE,
-        # )
         self.optimizer = torch.optim.SGD(
             model.parameters(),
             lr=settings.TRAINER.LEARNING_RATE,
             weight_decay=settings.TRAINER.WEIGHT_DECAY,
             momentum=settings.TRAINER.MOMENTUM,
         )
-        # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #     self.optimizer,
-        #     T_max=settings.TRAINER.EPOCHS,
-        #     eta_min=1e-4,
-        # )
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            self.optimizer,
-            gamma=0.95,
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95)
+        self.state = RunState()
+        self.train_set, self.val_set = self.dataset.train_set(), self.dataset.val_set()
+
+        self.train_loader = self.make_dataloader(
+            self.train_set,
+            num_workers=mp.cpu_count() - 4 if settings.TRAINER.MULTIPROCESSING else 0,
         )
-        self.scaler = torch.amp.GradScaler(settings.DEVICE)
-        self.state = BaseTrainer.RunState()
-        self.__make_split()
-    
+        self.val_loader = self.make_dataloader(
+            self.val_set,
+            num_workers=2 if settings.TRAINER.MULTIPROCESSING else 0,
+        )
+
+        print(f"Training set has {len(self.train_set)} samples, validation set has {len(self.val_set)} samples")
+
     def __repr__(self) -> str:
         return self.__clas__.__name__
 
-    @property
-    def current(self) -> RunState.Current:
-        return self.state.current
-
     def train(self) -> None:
-        for self.current.epoch in range(self.current.epoch, settings.TRAINER.EPOCHS):
-            for self.current.step, sample in enumerate(self.train_loader):
-                self.__clean_memory()
-                if not self.__train_step(sample) or not self.__val_step():
-                    self.dataset.force_downsample(sample)
-                self.__log(show=True)
-                self.__backup_model(self.model.state_dict(), "latest")
+        for self.state.train.epoch in range(self.state.train.epoch, settings.TRAINER.EPOCHS):
+            self.state.val.epoch = self.state.train.epoch
+            self.optimizer.zero_grad()
+            self.__clean_memory()
+            self.__train_step()
+            self.__val_step()
+            self._custom_epoch_step()
             self.scheduler.step()
             print(f"Current learning rate: {self.scheduler.get_last_lr()}")
-            self._custom_epoch_step()
 
-    @handle_OOM
-    def __train_step(self, sample: Any) -> bool:
+    def __train_step(self) -> bool:
         self.model.train()
-        self._custom_train_step(sample)
-        on_last_batch = (self.current.step + 1) == len(self.train_loader)
-        if self.state.on_accumulation_step or on_last_batch:
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            self.optimizer.zero_grad(set_to_none=True)
+        for self.state.train.step, sample in enumerate(self.train_loader):
+            self.__clean_memory()
+            if not self._custom_train_step(sample):
+                self.train_set.force_downsample(sample)
+
+            if self.state.on_accumulation_step or (
+                _on_last_batch := (self.state.train.step + 1) == len(self.train_loader)
+            ):
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+            self.__backup_model(self.model.state_dict(), "latest")
+
+            print(
+                f"TRAIN:\t{self.state.train.log_header}"
+                + f" FMR[{self.feature_match_recall.train.get('average'):5.4f}]"
+                + f" {self.multi_loss.train} "
+                + f"({self.overlap_loss.train} + [{self.match_loss.weight}]{self.match_loss.train} + {self.circle_loss.train})"
+            )
+
+            self.state.train.iteration += 1
         return True
 
     @abstractmethod
     def _custom_train_step(self, sample: Any) -> None: ...
 
-    @handle_OOM
     def __val_step(self) -> bool:
-        if self.state.on_first_step or not self.state.on_validation_step:
-            return True
-
         self.model.eval()
         with torch.no_grad():
-            if _BEST_MODEL := self._custom_val_step():
-                self.current.best_model = self.model.state_dict()
-                self.__backup_model(self.current.best_model, "best")
+            for self.state.val.step, sample in enumerate(self.val_loader):
+                self.__clean_memory()
+                if not self._custom_val_step(sample):
+                    self.val_set.force_downsample(sample)
+
+                if self.state.val.on_best_iter:
+                    self.state.val.best_model = self.model.state_dict()
+                    self.__backup_model(self.state.val.best_model, "best")
+                    self.state.val.on_best_iter = False
+
+                print(
+                    f"VAL:\t{self.state.val.log_header}"
+                    + f" FMR[{self.feature_match_recall.val.get('average'):5.4f}]"
+                    + f" {self.multi_loss.val} "
+                    + f"({self.overlap_loss.val} + [{self.match_loss.weight}]{self.match_loss.val} + {self.circle_loss.val})"
+                )
+                self.state.val.iteration += 1
         return True
 
     @abstractmethod
-    def _custom_val_step() -> bool: ...
-    
+    def _custom_val_step(self, sample: Any) -> bool: ...
+
     @abstractmethod
     def _custom_epoch_step() -> None: ...
 
@@ -165,8 +187,8 @@ class BaseTrainer(ABC):
         backup: Dict[str, Any] = torch.load(path, weights_only=False)
         self.model.load_state_dict(backup["model_state_dict"])
         self.optimizer.load_state_dict(backup["optimizer_state_dict"])
-        self.current.step = backup["current_step"]
-        self.current.epoch = backup["current_epoch"]
+        self.state.train.train_step = backup["current_step"]
+        self.state.train.epoch = backup["current_epoch"]
 
     def __backup_model(self, model: Dict[str, Any], name: str) -> None:
         if self.state.on_first_step or not self.state.on_backup_step:
@@ -176,61 +198,30 @@ class BaseTrainer(ABC):
             {
                 "model_state_dict": model,
                 "optimizer_state_dict": self.optimizer.state_dict(),
-                "current_step": self.current.step,
-                "current_epoch": self.current.epoch,
+                "current_step": self.state.train.step,
+                "current_epoch": self.state.train.epoch,
                 "params": settings.__dict__,
             },
             f"./weights/{self.__class__.__name__}_{name}.tar",
         )
 
-    def __log(self, show: bool = False) -> None:
-        self.current.iteration = self.current.epoch * len(self.train_loader) + self.current.step
-        if not show:
-            return
-
-        print(
-            f"Epoch[{self.current.epoch:02d}] Step[{self.current.step:02d}] Iter[{self.current.iteration:02d}]" 
-            + self._custom_loss_log()
-        )
-
-    def __make_split(self) -> None:
-        train_set, val_set = torch.utils.data.random_split(
-            self.dataset, [1 - settings.TRAINER.VALIDATION_SPLIT, settings.TRAINER.VALIDATION_SPLIT]
-        )
-        train_set.dataset, val_set.dataset = copy.copy(self.dataset), copy.copy(self.dataset)
-
-        print(f"Train split has {len(train_set.indices)} point clouds")
-        print(f"Validation split has {len(val_set.indices)} point clouds")
-
-        self.train_loader = torch.utils.data.DataLoader(
-            dataset=train_set,
+    def make_dataloader(
+        self,
+        dataset: CloudDatasetsI,
+        num_workers: int,
+        tf_pipeline: Optional[List[torch.nn.Module]] = None,
+    ) -> torch.utils.data.DataLoader:
+        return torch.utils.data.DataLoader(
+            dataset=dataset,
             batch_size=settings.TRAINER.BATCH_SIZE,
             shuffle=True,
             collate_fn=partial(
-                self.dataset.collate_fn,
-                tf_pipeline=transform_factory(settings.TRAINER.POINTCLOUD_TF.TRAIN),
-                # cloud_tf=transform_factory(settings.TRAINER.POINTCLOUD_TF.TRAIN),
-                # implicit_tf=transform_factory(settings.TRAINER.IMPLICIT_GRID_TF.TRAIN),
+                dataset.collate_fn,
+                tf_pipeline=tf_pipeline,
             ),
-            num_workers=mp.cpu_count() - 4 if settings.TRAINER.MULTIPROCESSING else 0,
+            num_workers=num_workers,
             multiprocessing_context="spawn" if settings.TRAINER.MULTIPROCESSING else None,
-            pin_memory=True,
-        )
-        self.val_loader = iter(
-            torch.utils.data.DataLoader(
-                dataset=val_set,
-                batch_size=1,
-                shuffle=False,
-                collate_fn=partial(
-                    self.dataset.collate_fn,
-                    tf_pipeline=transform_factory(settings.TRAINER.POINTCLOUD_TF.TRAIN),
-                    # cloud_tf=transform_factory(settings.TRAINER.POINTCLOUD_TF.VALIDATION),
-                    # implicit_tf=transform_factory(settings.TRAINER.IMPLICIT_GRID_TF.VALIDATION),
-                ),
-                num_workers=2 if settings.TRAINER.MULTIPROCESSING else 0,
-                multiprocessing_context="spawn" if settings.TRAINER.MULTIPROCESSING else None,
-                pin_memory=True,
-            )
+            persistent_workers=True if settings.TRAINER.MULTIPROCESSING else False,
         )
 
     @abstractmethod
@@ -246,7 +237,7 @@ class IAETrainer(BaseTrainer):
         self.l1_loss = L1Loss(trainer_state=self.state, reduction="none")
         self.iou_loss = IOU(trainer_state=self.state, threshold=0.5)
 
-    def _custom_train_step(self, sample: Tuple[Cloud, Cloud]) -> None:
+    def _custom_train_step(self, sample: Tuple[PCloud, PCloud]) -> None:
         cloud, implicit = sample
         with torch.amp.autocast(settings.DEVICE):
             predicted_df = self.model(cloud, implicit)
@@ -254,29 +245,23 @@ class IAETrainer(BaseTrainer):
             self.iou_loss.train(sample=(predicted_df, implicit.features))
 
     def _custom_val_step(self) -> bool:
-        cloud, implicit = next(self.val_loader)
+        try:
+            cloud, implicit = next(self.val_loader)
+        except StopIteration:
+            self.val_loader = iter(
+                self.make_dataloader(self.val_set, num_workers=2 if settings.TRAINER.MULTIPROCESSING else 0)
+            )
+            cloud, implicit = next(self.val_loader)
+
         predicted_df = self.model(cloud, implicit)
         self.l1_loss.val(sample=(predicted_df, implicit.features))
         self.iou_loss.val(sample=(predicted_df, implicit.features))
         return self.l1_loss.val.on_best_iter
-    
+
     def _custom_epoch_step(self) -> None: ...
 
     def _custom_loss_log(self) -> str:
-        out = f"\tL1LossTrain[{self.l1_loss.train.current:5.2f}] IOUTrain[{self.iou_loss.train.current:5.2f}]"
-        out += (
-            f"\tL1LossVal[{self.l1_loss.val.current:5.2f}] IOUVal[{self.iou_loss.val.current:5.2f}]"
-            if not self.state.on_first_step and self.state.on_validation_step
-            else ""
-        )
-        
-        out = f"{self.l1_loss.train} {self.iou_loss.train}"
-        if not self.state.on_first_step and self.state.on_validation_step:
-            BLANK = " " * len(
-                f"Epoch[{self.current.epoch:02d}] Step[{self.current.step:02d}] Iter[{self.current.iteration:02d}]" 
-            )
-            out += f"\n{BLANK}{self.l1_loss.val} {self.iou_loss.val}"
-        return out
+        return ""
 
 
 class PredatorTrainer(BaseTrainer):
@@ -285,6 +270,29 @@ class PredatorTrainer(BaseTrainer):
     circle_loss: CircleLoss
     multi_loss: MultiLoss
     feature_match_recall: FeatureMatchRecall
+
+    @dataclass
+    class AverageMeter:
+        val: float = field(default=0.0)
+        avg: float = field(default=0.0)
+        sum: float = field(default=0.0)
+        sq_sum: float = field(default=0.0)
+        count: int = field(default=0)
+
+        def reset(self):
+            self.val = 0
+            self.avg = 0
+            self.sum = 0.0
+            self.sq_sum = 0.0
+            self.count = 0
+
+        def update(self, val, n=1):
+            self.val = val
+            self.sum += val * n
+            self.count += n
+            self.avg = self.sum / self.count
+            self.sq_sum += val**2 * n
+            self.var = self.sq_sum / self.count - self.avg**2
 
     def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         super(PredatorTrainer, self).__init__(model, dataset)
@@ -300,47 +308,28 @@ class PredatorTrainer(BaseTrainer):
         )
         self.feature_match_recall = FeatureMatchRecall(trainer_state=self.state)
 
-    def _custom_train_step(self, sample: Pair) -> None:
+    @handle_OOM
+    def _custom_train_step(self, sample: Pair) -> bool:
         sample.correspondences
-        sample.source.pcd = sample.source.pcd.transform(sample.GT_tf_matrix)
-
-        with torch.amp.autocast(settings.DEVICE):
-            loss = self.multi_loss.train(sample:=self.model(sample)) / settings.TRAINER.ACCUM_STEPS
-            self.scaler.scale(loss).backward()
+        sample = self.model(sample)
+        sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)
+        loss = self.multi_loss.train(sample) / settings.TRAINER.ACCUM_STEPS
         self.feature_match_recall.train(sample)
+        loss.backward()
+        return True
 
-    def _custom_val_step(self) -> bool:
-        sample: Pair = next(self.val_loader)
-        
+    @handle_OOM
+    def _custom_val_step(self, sample: Pair) -> bool:
         sample.correspondences
-        sample.source.pcd = sample.source.pcd.transform(sample.GT_tf_matrix)
-        
-        self.multi_loss.val(sample:=self.model(sample))
+        sample = self.model(sample)
+        sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)
+        self.multi_loss.val(sample)
         self.feature_match_recall.val(sample)
-        return self.multi_loss.val.on_best_iter
-    
+        self.state.val.on_best_iter = self.multi_loss.val.on_best_iter
+        return True
+
     def _custom_epoch_step(self) -> None:
-        if self.feature_match_recall.val.get("average") > 0.3:
-            self.match_loss.weight = 1.0
-            
-        for metric in [self.multi_loss, self.feature_match_recall]:
-            for mode in ["train", "val"]:
-                getattr(metric, mode).best = 0.0
-                getattr(metric, mode).current = 0.0
-                getattr(metric, mode).total_sum = 0.0
-                getattr(metric, mode).average = 0.0
+        self.match_loss.weight = 1.0 if self.feature_match_recall.val.get("average") > 0.3 else 0.0
 
     def _custom_loss_log(self) -> str:
-        out = f" {self.feature_match_recall.train.get('average')}"
-        out += f" {self.multi_loss.train} "
-        out += f"({self.overlap_loss.train} + {self.match_loss.train} + {self.circle_loss.train})"
-
-        if not self.state.on_first_step and self.state.on_validation_step:
-            BLANK = " " * len(
-                f"Epoch[{self.current.epoch:02d}] Step[{self.current.step:02d}] Iter[{self.current.iteration:02d}]" 
-            )
-            out += f"\n{BLANK} {self.feature_match_recall.val}"
-            out += f" {self.multi_loss.val}"
-            out += f" ({self.overlap_loss.val} + {self.match_loss.val} + {self.circle_loss.val})"
-        out += "\n"
-        return out
+        return ""
