@@ -1,9 +1,7 @@
-from multimethod import multimethod
 import torch
-from typing import Tuple, List, Any
-import copy
+from typing import Tuple, List
 
-from LIM.data.structures import PCloud, Pair
+from LIM.data.structures import Pair
 from LIM.models.PREDATOR.blocks import KPConvNeighbors, ResBlock_A, ResBlock_B, Conv1DAdapter, BatchNorm
 from LIM.models.PREDATOR.blocks.leakyrelu import LeakyReLU
 from debug.decorators import identify_method
@@ -97,8 +95,5 @@ class Encoder(torch.nn.Module):
         current.compute_neighbors(self.neighbor_radius[-1], self.sample_dl[-1])
         current.mix = self.block4(current.mix)
         del current.mix._super
-        # super_cloud = self.block4(copy.copy(current.mix))
-        # current.mix._super.features = super_cloud.features.clone()
-        # current.mix = current.mix._super
         current.mix.features = current.mix.features.transpose(0, 1).unsqueeze(0)
         return current, skip_connections

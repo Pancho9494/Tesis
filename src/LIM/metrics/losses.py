@@ -294,8 +294,6 @@ class FeatureMatchRecall(Loss):
         sel_dist = torch.gather(coords_dist, dim=-1, index=sel_idx[:, None])[pos_mask.sum(-1) > 0]
         n_pred_pos = (sel_dist < self.POS_RADIUS).float().sum()
         recall = n_pred_pos / n_gt_pos
-        if torch.isnan(recall).any():
-            print("?")
         return recall
 
     def _square_distance(self, src, dst, normalised=False):
