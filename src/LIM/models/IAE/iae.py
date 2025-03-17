@@ -1,32 +1,19 @@
 from LIM.models.IAE.decoder import LocalDecoder
-from LIM.data.structures.pcloud import Cloud
+from LIM.data.structures import PCloud
 import torch
 from config import settings
 from submodules.IAE.src.encoder.unet3d import UNet3D
 import torch_scatter
-from LIM.models.IAE.KPConvEncoder import KPConvFPN
+from LIM.models.modelI import Model
 
 
-class IAE(torch.nn.Module):
-    __device: torch.device = torch.device(settings.DEVICE)
-
+class IAE(Model):
     def __init__(self, encoder: torch.nn.Module) -> None:
-        super(IAE, self).__init__()
-        print(settings.MODEL)
         self.LATENT_DIM = settings.MODEL.LATENT_DIM
         self.PADDING = settings.MODEL.ENCODER.PADDING
         self.GRID_RESOLUTION = settings.MODEL.ENCODER.GRID_RES
 
         self.encoder = encoder
-        self.testencoder = KPConvFPN(
-            inDim=1,
-            outDim=self.LATENT_DIM,
-            iniDim=64,
-            kerSize=15,
-            iniRadius=2.5 * 0.025,
-            iniSigma=2.0 * 0.025,
-            groupNorm=32,
-        )
         self.decoder = LocalDecoder(
             latent_dim=self.LATENT_DIM,
             hidden_size=settings.MODEL.DECODER.HIDDEN_SIZE,
@@ -42,7 +29,7 @@ class IAE(torch.nn.Module):
     def device(self) -> torch.device:
         return next(self.parameters()).device
 
-    def forward(self, cloud: Cloud, implicit: Cloud) -> torch.Tensor:
+    def forward(self, cloud: PCloud, implicit: PCloud) -> torch.Tensor:
         """
         Args:
             cloud: The input cloud scan
@@ -52,7 +39,6 @@ class IAE(torch.nn.Module):
             torch.Tensor: The predicted DF
         """
         latent_vector = self.encoder(cloud)
-        foo = self.testencoder(cloud)
         feature_grid = self._generate_grid_features(cloud.points, latent_vector)
         feature_grid = self.unet3d(feature_grid)
         predicted_df = self.decoder(implicit.points, feature_grid)

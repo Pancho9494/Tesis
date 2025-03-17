@@ -5,7 +5,6 @@ from typing import Protocol, Tuple
 from LIM.data.structures.pair import Pair
 from LIM.metrics import Loss
 from debug.decorators import identify_method
-from sklearn.metrics import precision_recall_fscore_support
 
 
 class TrainerStateProtocol(Protocol):

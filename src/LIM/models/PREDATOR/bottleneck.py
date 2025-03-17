@@ -1,7 +1,7 @@
 import torch
 import copy
 from typing import Tuple, Callable
-from LIM.models.PREDATOR.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
+from LIM.models.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures import PCloud, Pair
 from debug.decorators import identify_method
 import config

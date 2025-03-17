@@ -1,30 +1,16 @@
 from abc import ABC, abstractmethod
 import aim
-import copy
 from dataclasses import dataclass, field
 from functools import partial
 import gc
 import multiprocessing as mp
-from pathlib import Path
 import torch
-from typing import Dict, Any, Union, Tuple, Callable, List, Optional
-
+from typing import Dict, Any, Callable, List, Optional
 import torch.utils.data.dataloader
+import functools
 
 from config import settings
-from LIM.data.structures import PCloud, Pair
 from LIM.data.sets import CloudDatasetsI
-from LIM.metrics import (
-    MultiLoss,
-    Loss,
-    L1Loss,
-    IOU,
-    CircleLoss,
-    OverlapLoss,
-    MatchabilityLoss,
-    FeatureMatchRecall,
-)
-import functools
 
 
 def handle_OOM(func: Callable) -> bool:
@@ -107,6 +93,15 @@ class BaseTrainer(ABC):
     def __repr__(self) -> str:
         return self.__clas__.__name__
 
+    @abstractmethod
+    def _custom_train_step(self, sample: Any) -> bool: ...
+
+    @abstractmethod
+    def _custom_val_step(self, sample: Any) -> bool: ...
+
+    @abstractmethod
+    def _custom_epoch_step() -> None: ...
+
     def train(self) -> None:
         for self.state.train.epoch in range(self.state.train.epoch, settings.TRAINER.EPOCHS):
             self.state.val.epoch = self.state.train.epoch
@@ -126,25 +121,17 @@ class BaseTrainer(ABC):
                 self.train_set.force_downsample(sample)
 
             if self.state.on_accumulation_step or (
-                _on_last_batch := (self.state.train.step + 1) == len(self.train_loader)
+                _ON_LAST_BATCH := (self.state.train.step + 1) == len(self.train_loader)
             ):
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
-            self.__backup_model(self.model.state_dict(), "latest")
+            if self.state.on_backup_step:
+                self.model.save("latest")
 
-            print(
-                f"TRAIN:\t{self.state.train.log_header}"
-                + f" FMR[{self.feature_match_recall.train.get('average'):5.4f}]"
-                + f" {self.multi_loss.train} "
-                + f"({self.overlap_loss.train} + [{self.match_loss.weight}]{self.match_loss.train} + {self.circle_loss.train})"
-            )
-
+            self._custom_loss_log(mode="train")
             self.state.train.iteration += 1
         return True
-
-    @abstractmethod
-    def _custom_train_step(self, sample: Any) -> None: ...
 
     def __val_step(self) -> bool:
         self.model.eval()
@@ -155,55 +142,19 @@ class BaseTrainer(ABC):
                     self.val_set.force_downsample(sample)
 
                 if self.state.val.on_best_iter:
-                    self.state.val.best_model = self.model.state_dict()
-                    self.__backup_model(self.state.val.best_model, "best")
+                    self.model.backup("best")
                     self.state.val.on_best_iter = False
 
-                print(
-                    f"VAL:\t{self.state.val.log_header}"
-                    + f" FMR[{self.feature_match_recall.val.get('average'):5.4f}]"
-                    + f" {self.multi_loss.val} "
-                    + f"({self.overlap_loss.val} + [{self.match_loss.weight}]{self.match_loss.val} + {self.circle_loss.val})"
-                )
+                self._custom_loss_log(mode="val")
                 self.state.val.iteration += 1
         return True
 
-    @abstractmethod
-    def _custom_val_step(self, sample: Any) -> bool: ...
-
-    @abstractmethod
-    def _custom_epoch_step() -> None: ...
-
     def __clean_memory(self) -> None:
-        """
-        I'm not entirely sure if this is necessary, but it seems to help getting less cuda out of memory errors
-        """
+        if self.device != torch.device("cuda"):
+            return
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
-
-    def load_model(self, path: Union[str, Path]) -> None:
-        print(f"Loading model from {path}")
-        backup: Dict[str, Any] = torch.load(path, weights_only=False)
-        self.model.load_state_dict(backup["model_state_dict"])
-        self.optimizer.load_state_dict(backup["optimizer_state_dict"])
-        self.state.train.train_step = backup["current_step"]
-        self.state.train.epoch = backup["current_epoch"]
-
-    def __backup_model(self, model: Dict[str, Any], name: str) -> None:
-        if self.state.on_first_step or not self.state.on_backup_step:
-            return
-
-        torch.save(
-            {
-                "model_state_dict": model,
-                "optimizer_state_dict": self.optimizer.state_dict(),
-                "current_step": self.state.train.step,
-                "current_epoch": self.state.train.epoch,
-                "params": settings.__dict__,
-            },
-            f"./weights/{self.__class__.__name__}_{name}.tar",
-        )
 
     def make_dataloader(
         self,
@@ -225,111 +176,4 @@ class BaseTrainer(ABC):
         )
 
     @abstractmethod
-    def _custom_loss_log(self) -> str: ...
-
-
-class IAETrainer(BaseTrainer):
-    l1_loss: Loss
-    iou_loss: Loss
-
-    def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
-        super(IAETrainer, self).__init__(model, dataset)
-        self.l1_loss = L1Loss(trainer_state=self.state, reduction="none")
-        self.iou_loss = IOU(trainer_state=self.state, threshold=0.5)
-
-    def _custom_train_step(self, sample: Tuple[PCloud, PCloud]) -> None:
-        cloud, implicit = sample
-        with torch.amp.autocast(settings.DEVICE):
-            predicted_df = self.model(cloud, implicit)
-            self.l1_loss.train(sample=(predicted_df, implicit.features))
-            self.iou_loss.train(sample=(predicted_df, implicit.features))
-
-    def _custom_val_step(self) -> bool:
-        try:
-            cloud, implicit = next(self.val_loader)
-        except StopIteration:
-            self.val_loader = iter(
-                self.make_dataloader(self.val_set, num_workers=2 if settings.TRAINER.MULTIPROCESSING else 0)
-            )
-            cloud, implicit = next(self.val_loader)
-
-        predicted_df = self.model(cloud, implicit)
-        self.l1_loss.val(sample=(predicted_df, implicit.features))
-        self.iou_loss.val(sample=(predicted_df, implicit.features))
-        return self.l1_loss.val.on_best_iter
-
-    def _custom_epoch_step(self) -> None: ...
-
-    def _custom_loss_log(self) -> str:
-        return ""
-
-
-class PredatorTrainer(BaseTrainer):
-    overlap_loss: OverlapLoss
-    match_loss: MatchabilityLoss
-    circle_loss: CircleLoss
-    multi_loss: MultiLoss
-    feature_match_recall: FeatureMatchRecall
-
-    @dataclass
-    class AverageMeter:
-        val: float = field(default=0.0)
-        avg: float = field(default=0.0)
-        sum: float = field(default=0.0)
-        sq_sum: float = field(default=0.0)
-        count: int = field(default=0)
-
-        def reset(self):
-            self.val = 0
-            self.avg = 0
-            self.sum = 0.0
-            self.sq_sum = 0.0
-            self.count = 0
-
-        def update(self, val, n=1):
-            self.val = val
-            self.sum += val * n
-            self.count += n
-            self.avg = self.sum / self.count
-            self.sq_sum += val**2 * n
-            self.var = self.sq_sum / self.count - self.avg**2
-
-    def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
-        super(PredatorTrainer, self).__init__(model, dataset)
-        self.overlap_loss = OverlapLoss(trainer_state=self.state, weight=1.0)
-        self.match_loss = MatchabilityLoss(trainer_state=self.state, weight=0.0)
-        self.circle_loss = CircleLoss(trainer_state=self.state, weight=1.0)
-        self.multi_loss = MultiLoss(
-            losses=[
-                self.circle_loss,
-                self.overlap_loss,
-                self.match_loss,
-            ],
-        )
-        self.feature_match_recall = FeatureMatchRecall(trainer_state=self.state)
-
-    @handle_OOM
-    def _custom_train_step(self, sample: Pair) -> bool:
-        sample.correspondences
-        sample = self.model(sample)
-        sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)
-        loss = self.multi_loss.train(sample) / settings.TRAINER.ACCUM_STEPS
-        self.feature_match_recall.train(sample)
-        loss.backward()
-        return True
-
-    @handle_OOM
-    def _custom_val_step(self, sample: Pair) -> bool:
-        sample.correspondences
-        sample = self.model(sample)
-        sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)
-        self.multi_loss.val(sample)
-        self.feature_match_recall.val(sample)
-        self.state.val.on_best_iter = self.multi_loss.val.on_best_iter
-        return True
-
-    def _custom_epoch_step(self) -> None:
-        self.match_loss.weight = 1.0 if self.feature_match_recall.val.get("average") > 0.3 else 0.0
-
-    def _custom_loss_log(self) -> str:
-        return ""
+    def _custom_loss_log(self, mode: str) -> None: ...

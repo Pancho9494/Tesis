@@ -1,8 +1,8 @@
 import torch
 from typing import List
 from LIM.data.structures import Pair
-from LIM.models.PREDATOR.blocks import Conv1D
-from LIM.models.PREDATOR.blocks.nearestupsample import NearestUpsample
+from LIM.models.blocks import Conv1D
+from LIM.models.blocks.nearestupsample import NearestUpsample
 import config
 
 

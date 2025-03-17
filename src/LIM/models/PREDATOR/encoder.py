@@ -2,13 +2,15 @@ import torch
 from typing import Tuple, List
 
 from LIM.data.structures import Pair
-from LIM.models.PREDATOR.blocks import KPConvNeighbors, ResBlock_A, ResBlock_B, Conv1DAdapter, BatchNorm
-from LIM.models.PREDATOR.blocks.leakyrelu import LeakyReLU
+from LIM.models.blocks import KPConvNeighbors, ResBlock_A, ResBlock_B, Conv1DAdapter, BatchNorm
+from LIM.models.blocks.leakyrelu import LeakyReLU
 from debug.decorators import identify_method
 import config
 
 
 class Encoder(torch.nn.Module):
+    skip_connections: List[torch.Tensor]
+
     def __init__(self) -> None:
         super(Encoder, self).__init__()
 
@@ -16,7 +18,6 @@ class Encoder(torch.nn.Module):
         LATENT_DIM = config.settings.MODEL.LATENT_DIM
         self.neighbor_radius = [(2**i) * 0.0625 for i in range(2 + N_LAYERS)]
         self.sample_dl = [(2**i) * 0.05 for i in range(1 + N_LAYERS)] + [None]
-
         self.enter = torch.nn.Sequential(
             KPConvNeighbors(in_dim=2 ** (0), out_dim=2 ** (6), radius=self.neighbor_radius[0]),
             BatchNorm(in_dim=2 ** (6), momentum=0.02),
@@ -48,13 +49,13 @@ class Encoder(torch.nn.Module):
         return "Encoder()"
 
     @identify_method
-    def forward(self, pair: Pair) -> Tuple[Pair, List[torch.Tensor]]:
-        skip_connections: List[torch.Tensor] = []
+    def forward(self, pair: Pair) -> Pair:
+        self.skip_connections = []
         current: Pair = pair
         for idx, block in enumerate([self.enter, *self.inner_layers]):
             current.compute_neighbors(self.neighbor_radius[idx], self.sample_dl[idx])
             current.mix = block(current.mix)
-            skip_connections.append(block[-1].skip_connection)
+            self.skip_connections.append(block[-1].skip_connection)
             current.mix._super.features = current.mix.features
 
             current.mix = current.mix._super
@@ -65,4 +66,4 @@ class Encoder(torch.nn.Module):
         current.mix = self.exit(current.mix)
         del current.mix._super
         current.mix.features = current.mix.features.transpose(0, 1).unsqueeze(0)
-        return current, skip_connections
+        return current

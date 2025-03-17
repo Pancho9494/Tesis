@@ -63,12 +63,6 @@ class KPConvFPN(torch.nn.Module):
         neighbors = [torch.from_numpy(v).to(self.__device) for v in neighbors]
 
         residuals = {0: features}
-
-        # print(f"subsamples: {[s.shape for s in subsamples]}")
-        # print(f"neighbors: {[s.shape for s in neighbors]}")
-        # print(f"subsample_neighbors: {[s.shape for s in subsample_neighbors]}")
-        # print(f"upsample_neighbors: {[s.shape for s in upsample_neighbors]}")
-        print(residuals[0].shape, subsamples[0].shape, neighbors[0].shape)
         residuals[0] = self.blocks[0][0](residuals[0], subsamples[0], subsamples[0], neighbors[0])
         residuals[0] = self.blocks[0][1](residuals[0], subsamples[0], subsamples[0], neighbors[0])
 
