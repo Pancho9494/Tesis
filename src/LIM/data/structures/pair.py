@@ -125,21 +125,20 @@ class Pair:
         self.mix.features = torch.cat(tensors=(self.source.features, self.target.features), dim=dimension)
         return self
 
-    def set_overlaps_saliencies(self, value: torch.Tensor) -> None:
+    def set_overlaps_saliencies(self, value: torch.Tensor, final_feats_dim: int) -> None:
         sigmoid = torch.nn.Sigmoid()
 
-        FINAL_FEATS_DIM = 32
         self.mix.features = torch.nn.functional.normalize(
-            value[:, :FINAL_FEATS_DIM], p=2, dim=1
+            value[:, :final_feats_dim], p=2, dim=1
         )  # final feats dim = 32
         self.overlaps.mix = torch.nan_to_num(
-            torch.clamp(sigmoid(value[:, FINAL_FEATS_DIM]), min=0, max=1),
+            torch.clamp(sigmoid(value[:, final_feats_dim]), min=0, max=1),
             nan=0.0,
             posinf=0.0,
             neginf=0.0,
         )
         self.saliencies.mix = torch.nan_to_num(
-            torch.clamp(sigmoid(value[:, FINAL_FEATS_DIM + 1]), min=0, max=1),
+            torch.clamp(sigmoid(value[:, final_feats_dim + 1]), min=0, max=1),
             nan=0.0,
             posinf=0.0,
             neginf=0.0,

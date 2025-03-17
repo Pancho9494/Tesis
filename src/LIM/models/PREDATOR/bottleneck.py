@@ -4,6 +4,7 @@ from typing import Tuple, Callable
 from LIM.models.PREDATOR.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures import PCloud, Pair
 from debug.decorators import identify_method
+import config
 
 
 class GNN(torch.nn.Module):
@@ -110,11 +111,27 @@ class CrossAttention(torch.nn.Module):
 class BottleNeck(torch.nn.Module):
     def __init__(self) -> None:
         super(BottleNeck, self).__init__()
-        self.pre_self_attention = GNN(feature_dim=256)
-        self.post_self_attention = GNN(feature_dim=256)
-        self.cross_attention = CrossAttention(num_heads=4, feature_dim=256)
-        self.feature_projection = torch.nn.Conv1d(in_channels=256, out_channels=256, kernel_size=1, bias=True)
-        self.score_projection = torch.nn.Conv1d(in_channels=256, out_channels=1, kernel_size=1, bias=True)
+        LATENT_DIM = config.settings.MODEL.LATENT_DIM
+        self.pre_self_attention = GNN(
+            feature_dim=LATENT_DIM,
+        )
+        self.cross_attention = CrossAttention(num_heads=4, feature_dim=LATENT_DIM)
+        self.post_self_attention = GNN(
+            feature_dim=LATENT_DIM,
+        )
+
+        self.feature_projection = torch.nn.Conv1d(
+            in_channels=LATENT_DIM,
+            out_channels=LATENT_DIM,
+            kernel_size=1,
+            bias=True,
+        )
+        self.score_projection = torch.nn.Conv1d(
+            in_channels=LATENT_DIM,
+            out_channels=1,
+            kernel_size=1,
+            bias=True,
+        )
         self.epsilon = torch.nn.Parameter(torch.tensor(-5.0))
 
     def __repr__(self) -> str:

@@ -11,6 +11,7 @@ def yaml_settings_source(settings: BaseSettings) -> Dict[str, Any]:
 
 class Model(BaseSettings):
     class Encoder(BaseSettings):
+        N_HIDDEN_LAYERS: int
         KNN: int
         EMB_DIM: int
         PADDING: float
