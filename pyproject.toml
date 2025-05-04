@@ -52,3 +52,10 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = false
 docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+pythonpath="src"
+testpaths=["test"]
+filterwarnings = [
+    "ignore::sqlalchemy.exc.MovedIn20Warning"
+]

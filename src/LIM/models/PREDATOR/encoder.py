@@ -1,21 +1,20 @@
 import torch
-from typing import Tuple, List
-
-from LIM.data.structures import Pair
+import copy
+from typing import List, Any, Tuple
+from multimethod import multimethod
+from LIM.data.structures import PCloud, Pair
 from LIM.models.blocks import KPConvNeighbors, ResBlock_A, ResBlock_B, Conv1DAdapter, BatchNorm
 from LIM.models.blocks.leakyrelu import LeakyReLU
 from debug.decorators import identify_method
-import config
+from config.config import settings
 
 
 class Encoder(torch.nn.Module):
-    skip_connections: List[torch.Tensor]
-
     def __init__(self) -> None:
         super(Encoder, self).__init__()
 
-        N_LAYERS = config.settings.MODEL.ENCODER.N_HIDDEN_LAYERS
-        LATENT_DIM = config.settings.MODEL.LATENT_DIM
+        N_LAYERS = settings.MODEL.ENCODER.N_HIDDEN_LAYERS
+        LATENT_DIM = settings.MODEL.LATENT_DIM
         self.neighbor_radius = [(2**i) * 0.0625 for i in range(2 + N_LAYERS)]
         self.sample_dl = [(2**i) * 0.05 for i in range(1 + N_LAYERS)] + [None]
         self.enter = torch.nn.Sequential(
@@ -48,14 +47,35 @@ class Encoder(torch.nn.Module):
     def __repr__(self) -> str:
         return "Encoder()"
 
-    @identify_method
-    def forward(self, pair: Pair) -> Pair:
-        self.skip_connections = []
+    @multimethod
+    def forward(self, *args, **kwargs) -> Any: ...
+
+    @multimethod
+    def forward(self, cloud: PCloud) -> Tuple[PCloud, List[torch.Tensor]]:
+        skip_connections: List[torch.Tensor] = []
+        current: PCloud = cloud
+        for idx, block in enumerate([self.enter, *self.inner_layers]):
+            current.compute_neighbors(self.neighbor_radius[idx], self.sample_dl[idx])
+            current = block(current)
+            skip_connections.append(block[-1].skip_connection)
+            current._super.features = current.features
+
+            current = current._super
+
+        current.compute_neighbors(self.neighbor_radius[-1], self.sample_dl[-1])
+        current = self.exit(current)
+        del current._super
+        current.features = current.features.transpose(0, 1).unsqueeze(0)
+        return current, skip_connections
+
+    @multimethod
+    def forward(self, pair: Pair) -> Tuple[Pair, List[torch.Tensor]]:
+        skip_connections: List[torch.Tensor] = []
         current: Pair = pair
         for idx, block in enumerate([self.enter, *self.inner_layers]):
             current.compute_neighbors(self.neighbor_radius[idx], self.sample_dl[idx])
             current.mix = block(current.mix)
-            self.skip_connections.append(block[-1].skip_connection)
+            skip_connections.append(block[-1].skip_connection)
             current.mix._super.features = current.mix.features
 
             current.mix = current.mix._super
@@ -66,4 +86,4 @@ class Encoder(torch.nn.Module):
         current.mix = self.exit(current.mix)
         del current.mix._super
         current.mix.features = current.mix.features.transpose(0, 1).unsqueeze(0)
-        return current
+        return current, skip_connections

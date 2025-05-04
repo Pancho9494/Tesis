@@ -2,7 +2,7 @@ import torch
 from LIM.data.structures import PCloud
 from LIM.models.blocks import BatchNorm
 from debug.decorators import identify_method
-from config import settings
+from config.config import settings
 
 
 class Bias(torch.nn.Module):

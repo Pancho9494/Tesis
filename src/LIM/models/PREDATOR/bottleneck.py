@@ -1,10 +1,11 @@
 import torch
 import copy
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Any
 from LIM.models.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures import PCloud, Pair
 from debug.decorators import identify_method
-import config
+from config.config import settings
+from multimethod import multimethod
 
 
 class GNN(torch.nn.Module):
@@ -111,7 +112,7 @@ class CrossAttention(torch.nn.Module):
 class BottleNeck(torch.nn.Module):
     def __init__(self) -> None:
         super(BottleNeck, self).__init__()
-        LATENT_DIM = config.settings.MODEL.LATENT_DIM
+        LATENT_DIM = settings.MODEL.LATENT_DIM
         self.pre_self_attention = GNN(
             feature_dim=LATENT_DIM,
         )
@@ -137,7 +138,23 @@ class BottleNeck(torch.nn.Module):
     def __repr__(self) -> str:
         return "BottleNeck()"
 
-    @identify_method
+    @multimethod
+    def forward(self, *args, **kwargs) -> Any: ...
+
+    @multimethod
+    def forward(self, source: PCloud, target: PCloud) -> Tuple[PCloud, PCloud]:
+        source.points, target.points = (
+            source.points.reshape(1, source.points.shape[1], -1),
+            target.points.reshape(1, target.points.shape[1], -1),
+        )
+
+        source, target = self.pre_self_attention(source), self.pre_self_attention(target)
+        source, target = self.cross_attention(source, target)
+        source, target = self.post_self_attention(source), self.post_self_attention(target)
+
+        return self._merge_features(source, target)
+
+    @multimethod
     def forward(self, pair: Pair) -> Pair:
         pair.mix.points = pair.mix.points.reshape(1, pair.mix.points.shape[1], -1)
         pair = pair.split()
@@ -149,7 +166,59 @@ class BottleNeck(torch.nn.Module):
         pair.mix.features = torch.cat(tensors=(pair.source.features, pair.target.features), dim=-1)
         return self._merge_features(pair)
 
-    @identify_method
+    @multimethod
+    def _merge_features(self, *args, **kwargs) -> Any: ...
+
+    @multimethod
+    def _merge_features(self, source: PCloud, target: PCloud) -> Tuple[PCloud, PCloud]:
+        feats_c = torch.cat([source.features, target.features], dim=-1)
+        feats_c = self.feature_projection(feats_c)
+        scores_c = self.score_projection(feats_c)
+        feats_gnn_norm = torch.nn.functional.normalize(feats_c, p=2, dim=1).squeeze(0).transpose(0, 1)  # [N, C]
+        feats_gnn_raw = feats_c.squeeze(0).transpose(0, 1)
+        scores_c_raw = scores_c.squeeze(0).transpose(0, 1)  # [N, 1]
+        split = source.features.shape[-1]
+        source.features, target.features = (
+            feats_gnn_norm[:split],
+            feats_gnn_norm[split:],
+        )
+        inner_product = torch.matmul(source.features, target.features.transpose(0, 1))
+        source_scores, target_scores = scores_c_raw[:split], scores_c_raw[split:]
+        temperature = torch.exp(self.epsilon) + 0.03
+        scores_saliency = torch.cat(
+            (
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_product / temperature, dim=1),
+                    target_scores,
+                ),
+                torch.matmul(
+                    torch.nn.functional.softmax(inner_product.transpose(0, 1) / temperature, dim=1),
+                    source_scores,
+                ),
+            ),
+            dim=0,
+        )
+
+        source.features = torch.cat(
+            [
+                source_scores,
+                scores_saliency[:split],  # target saliency
+                feats_gnn_raw[:split],  # target features
+            ],
+            dim=1,
+        )
+        target.features = torch.cat(
+            [
+                target_scores,
+                scores_saliency[split:],  # source saliency
+                feats_gnn_raw[split:],  # source features
+            ],
+            dim=1,
+        )
+
+        return source, target
+
+    @multimethod
     def _merge_features(self, pair: Pair) -> Pair:
         feats_c = self.feature_projection(pair.mix.features)
         scores_c = self.score_projection(feats_c)

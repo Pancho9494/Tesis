@@ -6,7 +6,7 @@ from tqdm import tqdm
 from LIM.data.structures.pcloud import PCloud
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
-from config import settings
+from config.config import settings
 from debug.decorators import identify_method
 
 

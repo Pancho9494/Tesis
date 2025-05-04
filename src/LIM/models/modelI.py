@@ -1,13 +1,10 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from config import settings
 import torch
 import inspect
 
 
 class Model(ABC, torch.nn.Module):
-    __device: torch.device = torch.device(settings.DEVICE)
-
     def __init__(self, *args, **kwargs) -> None:
         super(Model, self).__init__()
 

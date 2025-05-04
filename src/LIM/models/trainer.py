@@ -9,7 +9,7 @@ from typing import Dict, Any, Callable, List, Optional
 import torch.utils.data.dataloader
 import functools
 
-from config import settings
+from config.config import settings
 from LIM.data.sets import CloudDatasetsI
 
 
@@ -20,7 +20,7 @@ def handle_OOM(func: Callable) -> bool:
             func(*args, **kwargs)
             return True
         except RuntimeError:
-            print("Cuda OOM! ", end="")
+            print("Cuda OOM!", end="")
             return False
 
     return inner
@@ -68,16 +68,20 @@ class BaseTrainer(ABC):
 
     def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
         self.model = model.to(self.device)
-        self.dataset = dataset
-        self.optimizer = torch.optim.SGD(
-            model.parameters(),
-            lr=settings.TRAINER.LEARNING_RATE,
-            weight_decay=settings.TRAINER.WEIGHT_DECAY,
-            momentum=settings.TRAINER.MOMENTUM,
-        )
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95)
+        # self.optimizer = torch.optim.SGD(
+        #     model.parameters(),
+        #     lr=settings.TRAINER.LEARNING_RATE,
+        #     weight_decay=settings.TRAINER.WEIGHT_DECAY,
+        #     momentum=settings.TRAINER.MOMENTUM,
+        # )
+
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+        # self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95)
         self.state = RunState()
-        self.train_set, self.val_set = self.dataset.train_set(), self.dataset.val_set()
+        self.train_set, self.val_set = (
+            dataset.new_instance(CloudDatasetsI.SPLITS.TRAIN),
+            dataset.new_instance(CloudDatasetsI.SPLITS.VAL),
+        )
 
         self.train_loader = self.make_dataloader(
             self.train_set,
@@ -110,8 +114,8 @@ class BaseTrainer(ABC):
             self.__train_step()
             self.__val_step()
             self._custom_epoch_step()
-            self.scheduler.step()
-            print(f"Current learning rate: {self.scheduler.get_last_lr()}")
+            # self.scheduler.step()
+            # print(f"Current learning rate: {self.scheduler.get_last_lr()}")
 
     def __train_step(self) -> bool:
         self.model.train()
@@ -142,7 +146,7 @@ class BaseTrainer(ABC):
                     self.val_set.force_downsample(sample)
 
                 if self.state.val.on_best_iter:
-                    self.model.backup("best")
+                    self.model.save("best")
                     self.state.val.on_best_iter = False
 
                 self._custom_loss_log(mode="val")
@@ -160,16 +164,12 @@ class BaseTrainer(ABC):
         self,
         dataset: CloudDatasetsI,
         num_workers: int,
-        tf_pipeline: Optional[List[torch.nn.Module]] = None,
     ) -> torch.utils.data.DataLoader:
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=settings.TRAINER.BATCH_SIZE,
             shuffle=True,
-            collate_fn=partial(
-                dataset.collate_fn,
-                tf_pipeline=tf_pipeline,
-            ),
+            collate_fn=partial(dataset.collate_fn),
             num_workers=num_workers,
             multiprocessing_context="spawn" if settings.TRAINER.MULTIPROCESSING else None,
             persistent_workers=True if settings.TRAINER.MULTIPROCESSING else False,

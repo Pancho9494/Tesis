@@ -1,7 +1,7 @@
 services:
   IAE:
     image: IAE/cuda10.1-cudnn7
-    container_name: LIM_docker
+    container_name: IAE_docker
     runtime: nvidia  # Use the NVIDIA runtime
     deploy:
       resources:
@@ -19,12 +19,12 @@ services:
       - "seccomp=unconfined"
     shm_size: "8G"
     volumes:
-      - "..:/dockerx/LIM"
+      - "../src/submodules/IAE:/dockerx/IAE"
       - "/tmp/.X11-unix:/tmp/.X11-unix"  # Share the X11 socket with the container
       - type: bind
-        source: /home/fmolina/code/Tesis/data
-        target: /dockerx/LIM/data/
-    working_dir: "/dockerx/LIM"
+        source: /home/fmolina/code/Tesis/src/LIM/data
+        target: /dockerx/IAE/data/
+    working_dir: "/dockerx/IAE"
     entrypoint: "/bin/bash"
     stdin_open: true
     tty: true

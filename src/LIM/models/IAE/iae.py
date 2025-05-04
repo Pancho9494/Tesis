@@ -1,16 +1,18 @@
 from LIM.models.IAE.decoder import LocalDecoder
 from LIM.data.structures import PCloud
 import torch
-from config import settings
-from submodules.IAE.src.encoder.unet3d import UNet3D
+from config.config import settings
+from LIM.models.blocks.unet3d import UNet3D
 import torch_scatter
 from LIM.models.modelI import Model
+from LIM.models.IAE.DGCNNEncoder import DGCNN
 
 
 class IAE(Model):
     def __init__(self, encoder: torch.nn.Module) -> None:
+        super(IAE, self).__init__()
         self.LATENT_DIM = settings.MODEL.LATENT_DIM
-        self.PADDING = settings.MODEL.ENCODER.PADDING
+        self.PADDING = settings.MODEL.PADDING
         self.GRID_RESOLUTION = settings.MODEL.ENCODER.GRID_RES
 
         self.encoder = encoder
@@ -20,10 +22,10 @@ class IAE(Model):
             n_blocks=settings.MODEL.DECODER.N_BLOCKS,
             leaky=False,
             sample_mode=LocalDecoder.SampleModes.BILINEAR,
-            padding=settings.MODEL.DECODER.PADDING,
+            padding=self.PADDING,
             d_dim=None,
         )
-        self.unet3d = UNet3D(in_channels=256, out_channels=256, num_levels=4, f_maps=32)
+        self.unet3d = UNet3D(in_channels=self.LATENT_DIM, out_channels=self.LATENT_DIM, num_levels=4, f_maps=32)
 
     @property
     def device(self) -> torch.device:
@@ -38,8 +40,10 @@ class IAE(Model):
         Returns:
             torch.Tensor: The predicted DF
         """
-        latent_vector = self.encoder(cloud)
-        feature_grid = self._generate_grid_features(cloud.points, latent_vector)
+        (pred_cloud, _skip_connections) = self.encoder(cloud)
+        cloud.points, implicit.points = cloud.points.reshape((1, -1, 3)), implicit.points.reshape((1, -1, 3))
+        pred_cloud.points = pred_cloud.points.reshape((1, -1, 3))
+        feature_grid = self._generate_grid_features(pred_cloud.points, pred_cloud.features)
         feature_grid = self.unet3d(feature_grid)
         predicted_df = self.decoder(implicit.points, feature_grid)
         return predicted_df
@@ -58,7 +62,6 @@ class IAE(Model):
         points_nor = self._normalize_3d_coordinate(points.clone(), padding=self.PADDING)
         index = self._coordinate2index(points_nor)
         feature_grid = features.new_zeros(points.size(0), self.LATENT_DIM, self.GRID_RESOLUTION**3)
-        features = features.permute(0, 2, 1)
         feature_grid = torch_scatter.scatter_mean(features, index, out=feature_grid)
         feature_grid = feature_grid.reshape(
             points.size(0), self.LATENT_DIM, self.GRID_RESOLUTION, self.GRID_RESOLUTION, self.GRID_RESOLUTION

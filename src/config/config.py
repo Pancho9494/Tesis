@@ -12,16 +12,13 @@ def yaml_settings_source(settings: BaseSettings) -> Dict[str, Any]:
 class Model(BaseSettings):
     class Encoder(BaseSettings):
         N_HIDDEN_LAYERS: int
-        KNN: int
-        EMB_DIM: int
-        PADDING: float
         GRID_RES: int
 
     class Decoder(BaseSettings):
         HIDDEN_SIZE: int
         N_BLOCKS: int
-        PADDING: float
 
+    PADDING: float
     ENCODER: Encoder
     LATENT_DIM: int
     DECODER: Decoder
@@ -29,14 +26,14 @@ class Model(BaseSettings):
 
 class Transforms(BaseSettings):
     TRAIN: Optional[Dict[str, Dict[str, Any]]] = {}
-    VALIDATION: Optional[Dict[str, Dict[str, Any]]] = {}
+    VAL: Optional[Dict[str, Dict[str, Any]]] = {}
 
 
 class Trainer(BaseSettings):
     BATCH_SIZE: int
     LEARNING_RATE: float
-    WEIGHT_DECAY: float
-    MOMENTUM: float
+    WEIGHT_DECAY: Optional[float] = None
+    MOMENTUM: Optional[float] = None
     EPOCHS: int
     ACCUM_STEPS: int = Field(default=1, ge=1)
     VALIDATION_PERIOD: int
@@ -47,12 +44,23 @@ class Trainer(BaseSettings):
     IMPLICIT_GRID_TF: Optional[Transforms] = None
 
 
+class Tester(BaseSettings):
+    class Ransac(BaseSettings):
+        MAX_ITERATIONS: int
+        MAX_VALIDATION_STEPS: int
+        SIMILARITY_THRESHOLD: float
+        DISTANCE_THRESHOLD: float
+
+    BATCH_SIZE: int
+    DOWNSAMPLE_SIZE: int
+    RANSAC: Ransac
+
+
 class Settings(BaseSettings):
     MODEL: Model
     TRAINER: Trainer
+    TESTER: Tester
     DEVICE: str
-
-    model_config = SettingsConfigDict(env_file="config.yaml", env_file_encoding="utf-8")
 
     @classmethod
     def from_yaml(cls, path: str):
@@ -61,4 +69,4 @@ class Settings(BaseSettings):
         return cls(**data)
 
 
-settings = Settings.from_yaml("./src/config/config.yaml")
+settings = None  # Set from within main.py depending on which model we're training

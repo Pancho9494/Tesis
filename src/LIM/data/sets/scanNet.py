@@ -6,11 +6,13 @@ from LIM.data.structures.pcloud import PCloud, collate_cloud
 from LIM.data.sets.datasetI import CloudDatasetsI
 import torchvision
 import torch
-
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import shutil
 import random
+from LIM.data.structures import transform_factory
+from config.config import settings
+import functools
 
 executor = ThreadPoolExecutor()
 
@@ -39,19 +41,12 @@ class ScanNet(CloudDatasetsI):
 
     """
 
-    dir: Path
+    dir: Path = Path("./src/LIM/data/raw/scannet")
     paths: List[Path]
-    cloud_tf: Optional[torchvision.transforms.Compose] = None
-    implicit_tf: Optional[torchvision.transforms.Compose] = None
+    split: Optional[CloudDatasetsI.SPLITS] = None
 
     def __init__(self) -> None:
-        self.dir = Path("./data/scannet")
-        self.scenes = []
-
-        for room in self.dir.iterdir():
-            self.scenes = [scene for scene in room.iterdir() if scene.is_dir()]
-
-        print(f"Loaded ScanNet with {len(self)} point clouds")
+        self.rooms = self.dir.iterdir()
 
     def __len__(self) -> int:
         return len(self.scenes)
@@ -74,13 +69,19 @@ class ScanNet(CloudDatasetsI):
         cloud = PCloud.from_arr(pointcloud_file["points"].astype(np.float32))
         cloud.path = scene / f"pointcloud/pointcloud_{sub_idx:02d}.npz"
         implicit = PCloud.from_arr(iou_file["points"].astype(np.float32))
-        implicit.features = iou_file["df_value"].astype(np.float32)
+        implicit.features = np.expand_dims(iou_file["df_value"].astype(np.float32), axis=1)
+
         implicit.path = scene / f"points_iou/points_iou_{sub_idx:02d}.npz"
         return cloud, implicit
 
-    async def clean_bad_files(self) -> None:
+    @classmethod
+    async def clean_bad_files(cls) -> None:
         print("Cleaning ScanNet dataset")
-        files_to_check = [file for scene in self.scenes for file in scene.rglob("*.npz")]
+        instance = cls()
+        for room in instance.dir.iterdir():
+            scenes = [scene for scene in room.iterdir() if scene.is_dir()]
+
+        files_to_check = [file for scene in scenes for file in scene.rglob("*.npz")]
         remove = []
         with ProcessPoolExecutor() as executor:
             with tqdm(total=len(files_to_check), desc="Checking files", ncols=100) as progress_bar:
@@ -95,33 +96,67 @@ class ScanNet(CloudDatasetsI):
             (file.parent.parent / f"pointcloud/pointcloud_{idx}.npz").unlink(missing_ok=True)
             (file.parent.parent / f"points_iou/points_iou_{idx}.npz").unlink(missing_ok=True)
 
-        for scene in self.scenes:
+        for scene in scenes:
             if scene.is_dir():
                 if not any((scene / "pointcloud").iterdir()) or not any((scene / "points_iou").iterdir()):
                     shutil.rmtree(scene)
 
-    def set_transforms(self, cloud_tf: List[torch.nn.Module], implicit_tf: List[torch.nn.Module]) -> None:
-        self.cloud_tf = torchvision.transforms.Compose(cloud_tf)
-        self.implicit_tf = torchvision.transforms.Compose(implicit_tf)
+    @classmethod
+    def new_instance(cls, split: CloudDatasetsI.SPLITS) -> "ScanNet":
+        instance = cls()
+        instance.split = split
+        instance.scenes = []
+        for room in instance.rooms:
+            with open(room / f"{split.value}.lst") as file:
+                subset = file.read().splitlines()
+            instance.scenes.extend([room / filename for filename in subset if filename and (room / filename).exists()])
+        print(f"Loaded {cls.__name__}.{split.value} with {len(instance)} scenes")
+        return instance
 
     @property
     def collate_fn(self) -> Callable:
-        return collate_scannet
+        return functools.partial(collate_scannet, split=self.split)
 
 
 def collate_scannet(
     batch: List[Tuple[Optional[PCloud], Optional[PCloud]]],
-    cloud_tf: Optional[List[torch.nn.Module]],
-    implicit_tf: Optional[List[torch.nn.Module]],
+    split: ScanNet.SPLITS,
 ) -> Tuple[PCloud, PCloud]:
     clouds, implicits = [], []
     for cloud, implicit in batch:
         clouds.append(cloud)
         implicits.append(implicit)
 
-    cloud_batch, implicit_batch = collate_cloud(clouds), collate_cloud(implicits)
-    if cloud_tf is not None and implicit_tf is not None:
-        cloud_tf = torchvision.transforms.Compose(cloud_tf)
-        implicit_tf = torchvision.transforms.Compose(implicit_tf)
-        cloud_batch, implicit_batch = cloud_tf(cloud_batch), implicit_tf(implicit_batch)
+    cloud_tf = torchvision.transforms.Compose(
+        transform_factory(
+            getattr(settings.TRAINER.POINTCLOUD_TF, split.value.upper()),
+        )
+    )
+    cloud_batch = cloud_tf(collate_cloud(clouds))
+    implicit_tf = torchvision.transforms.Compose(
+        transform_factory(
+            getattr(settings.TRAINER.IMPLICIT_GRID_TF, split.value.upper()),
+        )
+    )
+    implicit_batch = implicit_tf(collate_cloud(implicits))
+    # cloud_batch, implicit_batch = (
+    #     (
+    #         pcd_tf := torchvision.transforms.Compose(
+    #             transform_factory(
+    #                 getattr(settings.TRAINER.POINTCLOUD_TF, split.value.upper()),
+    #             )
+    #         )
+    #     )(collate_cloud(clouds)),
+    #     (
+    #         imp_tf := torchvision.transforms.Compose(
+    #             transform_factory(
+    #                 getattr(settings.TRAINER.IMPLICIT_GRID_TF, split.value.upper()),
+    #             )
+    #         )
+    #     )(collate_cloud(implicits)),
+    # )
+    cloud_batch.points = cloud_batch.points.reshape(-1, 3)
+    cloud_batch.features = cloud_batch.features.reshape(-1, 1)
+    implicit_batch.points = implicit_batch.points.reshape(-1, 3)
+    implicit_batch.features = implicit_batch.features.reshape(-1, 1)
     return cloud_batch, implicit_batch

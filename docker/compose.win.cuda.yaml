@@ -2,27 +2,23 @@ services:
   LIM:
     image: pytorch/pytorch:2.4.1-cuda11.8-cudnn9-runtime
     container_name: LIM_docker
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - CPATH=/usr/local/cuda/include
+    device_requests:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+    ports:
+      - "8888:8888"    # e.g. Jupyter
+      - "6006:6006"    # e.g. TensorBoard
     volumes:
-      - "C:/Users/labvision/dockerx:/dockerx"
-      - "..:/dockerx/LIM"
-      - "//c/ProgramData/NVIDIA/docker:/etc/nvidia-container-runtime"
+      - "C:\\Users\\fmolina\\code\\Tesis\\src\\submodules\\IAE:/dockerx/IAE"
+      - "C:\\Users\\fmolina\\code\\Tesis\\src\\LIM\\data:/dockerx/IAE/data"
     working_dir: "/dockerx/LIM"
-    entrypoint: 
-      - "/bin/bash"
-      # - ./scripts/entrypoint.sh
+    entrypoint: ["/bin/bash", "-c"]
     stdin_open: true
     tty: true  # This is the equivalent of `-it` to keep the container interactive
+    environment:
+      - DISPLAY=host.docker.internal:0.0    # for X11 forwarding via a Windows X server
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
     shm_size: "8G"
-    group_add:
-      - "video"
-    ipc: "host"
-    network_mode: 'host'
-    cap_add:
-      - "SYS_PTRACE"
-    security_opt:
-      - "seccomp=unconfined"

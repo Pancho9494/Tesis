@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import torch
 from typing import Any, Callable, Protocol, List, Dict
 
-from config import settings
+from config.config import settings
 
 
 class TrainerStateProtocol(Protocol):

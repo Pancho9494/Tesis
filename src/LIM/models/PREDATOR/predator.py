@@ -2,8 +2,9 @@ from LIM.data.structures.pair import Pair
 from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
 from debug.decorators import identify_method
 from multimethod import multimethod
-from typing import Any
+from typing import Any, Tuple
 from LIM.models.modelI import Model
+import torch
 
 
 class PREDATOR(Model):
@@ -16,14 +17,28 @@ class PREDATOR(Model):
     def __repr__(self) -> str:
         return f"Predator({self.encoder}, {self.bottleneck}, {self.decoder})"
 
-    @multimethod
-    def forward(self, *args, **kwargs) -> Any: ...
-
     @identify_method
-    @multimethod
-    def forward(self, pair: Pair) -> Pair:
-        pair.join()
-        pair = self.encoder(pair)
-        pair = self.bottleneck(pair)
-        pair = self.decoder(pair, self.encoder.skip_connections)
-        return pair
+    def forward(self, pair: Pair) -> Tuple[Pair, torch.Tensor, torch.Tensor]:
+        source, target = pair.source, pair.target
+        (source, source_skip), (target, target_skip) = self.encoder(source), self.encoder(target)
+        source, target = self.bottleneck(source, target)
+        (source, source_overlap, source_saliency), (target, target_overlap, target_saliency) = (
+            self.decoder(source, source_skip),
+            self.decoder(target, target_skip),
+        )
+        pair.source, pair.target = source, target
+        cat_dim = torch.argmax(torch.tensor(source.points.shape)).item()
+        return (
+            pair,
+            _overlaps := torch.cat((source_overlap, target_overlap), dim=cat_dim),
+            _saliencies := torch.cat((source_saliency, target_saliency), dim=cat_dim),
+        )
+
+    # @identify_method
+    # def forward(self, pair: Pair) -> Pair:
+    #     pair.join()
+    #     pair, skip_connections = self.encoder(pair)
+    #     pair = self.bottleneck(pair)
+    #     (pair, overlap_score, saliency_score) = self.decoder(pair, skip_connections)
+    #     pair.split()
+    #     return pair, overlap_score, saliency_score

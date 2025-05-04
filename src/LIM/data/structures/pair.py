@@ -4,33 +4,12 @@ import open3d as o3d
 import torch
 from typing import Optional, Iterable, Tuple, Any
 
-from config import settings
-from LIM.data.structures import PCloud
+from config.config import settings
+from LIM.data.structures.pcloud import PCloud, Painter
 
+from debug.decorators import identify_method
 import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
-
-
-class Overlaps:
-    mix: torch.Tensor
-    src: torch.Tensor
-    target: torch.Tensor
-    device: torch.device = torch.device(settings.DEVICE)
-
-    def __init__(self) -> None:
-        self.src = torch.tensor([], device=self.device, requires_grad=True)
-        self.target = torch.tensor([], device=self.device, requires_grad=True)
-
-
-class Saliencies:
-    mix: torch.Tensor
-    src: torch.Tensor
-    target: torch.Tensor
-    device: torch.device = torch.device(settings.DEVICE)
-
-    def __init__(self) -> None:
-        self.src = torch.tensor([], device=self.device, requires_grad=True)
-        self.target = torch.tensor([], device=self.device, requires_grad=True)
 
 
 class Correspondences:
@@ -59,28 +38,28 @@ class Pair:
     Utility class that holds cloud pairs, with the transform that aligns them and their overlap
     """
 
+    id: Optional[str] = None
     source: PCloud
     target: PCloud
     mix: Optional[PCloud] = None
-    overlaps: Overlaps
-    saliencies: Saliencies
     _correspondences: Optional[Correspondences] = None
     GT_tf_matrix: Optional[np.ndarray] = None
     prediction: Optional[np.ndarray] = None
     _overlap: Optional[float] = None
     device: torch.device = torch.device(settings.DEVICE)
 
-    def __init__(self, source: PCloud, target: PCloud, GT_tf_matrix: Optional[np.ndarray] = None) -> None:
+    def __init__(
+        self, source: PCloud, target: PCloud, GT_tf_matrix: Optional[np.ndarray] = None, id: Optional[str] = None
+    ) -> None:
+        self.id = id
         self.source = source
         self.target = target
-        self.overlaps = Overlaps()
-        self.saliencies = Saliencies()
         if GT_tf_matrix is not None:
             self.GT_tf_matrix = GT_tf_matrix
 
     def __repr__(self) -> str:
         out = f"Pair(source={self.source}, target={self.target}"
-        out += f", {self.overlap * 100:02.2f}%" if self._overlap is not None else ""
+        # out += f", {self.overlap * 100:02.2f}%" if self._overlap is not None else ""
         out += ")"
         return out
 
@@ -88,8 +67,6 @@ class Pair:
         return iter((self.source, self.target))
 
     def split(self) -> "Pair":
-        # def match_shape(tensor):
-        #     if
         foo = max(tuple(self.source.shape))
         if len(self.mix.points.shape) == 2:
             self.source.points, self.target.points = (
@@ -125,29 +102,16 @@ class Pair:
         self.mix.features = torch.cat(tensors=(self.source.features, self.target.features), dim=dimension)
         return self
 
-    def set_overlaps_saliencies(self, value: torch.Tensor, final_feats_dim: int) -> None:
-        sigmoid = torch.nn.Sigmoid()
-
-        self.mix.features = torch.nn.functional.normalize(
-            value[:, :final_feats_dim], p=2, dim=1
-        )  # final feats dim = 32
-        self.overlaps.mix = torch.nan_to_num(
-            torch.clamp(sigmoid(value[:, final_feats_dim]), min=0, max=1),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-        self.saliencies.mix = torch.nan_to_num(
-            torch.clamp(sigmoid(value[:, final_feats_dim + 1]), min=0, max=1),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
+    @property
+    def tag(self) -> str:
+        return self.source.path[0]
 
     @property
     def correspondences(self) -> Correspondences:
         if self._correspondences is not None:
             return self._correspondences
+
+        assert self.GT_tf_matrix is not None, "No ground truth transformation given, can't compute correspondences"
 
         SEARCH_VOXEL_SIZE = 0.0375
         temp_source = self.source.pcd.to_legacy()
@@ -165,6 +129,7 @@ class Pair:
         self._correspondences.target_indices
         return self._correspondences
 
+    @identify_method
     def compute_neighbors(self, radius: float, sampleDl: Optional[float]) -> None:
         current_mix = self.mix.last
         current_source = self.source.last
@@ -262,3 +227,70 @@ class Pair:
         batch["correspondences"] = self.correspondences.matrix
 
         return batch
+
+    def show(self, predicted_tf: np.ndarray | None = None) -> None:
+        WIDTH, HEIGHT = 1280, 720
+        ROTATE_X, ROTATE_Y = 10.0, 0.0
+        YELLOW, BLUE = np.array([1.0, 0.706, 0.0]), np.array([0.0, 0.651, 0.929])
+        WHITE = np.array([1, 1, 1])
+
+        src_pcd = Painter.Uniform(YELLOW, compute_normals=True)(self.source)
+        tgt_pcd = Painter.Uniform(BLUE, compute_normals=True)(self.target)
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="raw", width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
+        vis.add_geometry(src_pcd.pcd)
+        vis.add_geometry(tgt_pcd.pcd)
+
+        # vis2 = o3d.visualization.Visualizer()
+        # vis2.create_window(window_name="overlaps", width=WIDTH, height=HEIGHT, left=WIDTH, top=0)
+        # gt_src_pcd = copy.deepcopy(self.source.pcd)
+        # gt_src_pcd.transform(self.GT_tf_matrix)
+        # gt_src_pcd.colors = o3d.utility.Vector3dVector(
+        #     YELLOW + (WHITE - YELLOW) * (1 - self.overlaps.src[:, None].repeat(1, 3).cpu().numpy())
+        # )
+        # gt_tgt = copy.deepcopy(self.target)
+        # gt_tgt.pcd.colors = o3d.utility.Vector3dVector(
+        #     BLUE + (WHITE - BLUE) * (1 - self.overlaps.target[:, None].repeat(1, 3).cpu().numpy())
+        # )
+        # vis2.add_geometry(gt_src_pcd)
+        # vis2.add_geometry(gt_tgt.pcd)
+
+        if predicted_tf is not None:
+            vis3 = o3d.visualization.Visualizer()
+            vis3.create_window(window_name="predicted", width=WIDTH, height=HEIGHT, left=WIDTH, top=int(HEIGHT * 1.7))
+            pred_src_pcd = copy.deepcopy(src_pcd.pcd)
+            pred_src_pcd.transform(predicted_tf)
+            vis3.add_geometry(pred_src_pcd)
+            vis3.add_geometry(tgt_pcd.pcd)
+
+        while True:
+            # vis.update_geometry(gt_src_pcd)
+            vis.update_geometry(tgt_pcd.pcd)
+            if not vis.poll_events():
+                break
+            ctr = vis.get_view_control()
+            ctr.rotate(ROTATE_X, ROTATE_Y)
+            vis.update_renderer()
+
+            # vis2.update_geometry(gt_src_pcd)
+            # vis2.update_geometry(gt_tgt.pcd)
+            # if not vis2.poll_events():
+            #     break
+            # ctr = vis2.get_view_control()
+            # ctr.rotate(ROTATE_X, ROTATE_Y)
+            # vis2.update_renderer()
+
+            if predicted_tf is not None:
+                vis3.update_geometry(pred_src_pcd)
+                vis3.update_geometry(tgt_pcd.pcd)
+                if not vis3.poll_events():
+                    break
+                ctr = vis3.get_view_control()
+                ctr.rotate(ROTATE_X, ROTATE_Y)
+                vis3.update_renderer()
+
+        vis.destroy_window()
+        # vis2.destroy_window()
+
+        if predicted_tf is not None:
+            vis3.destroy_window()

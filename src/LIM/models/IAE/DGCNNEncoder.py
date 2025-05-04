@@ -1,5 +1,5 @@
 import torch
-from LIM.data.structures.pcloud import Cloud
+from LIM.data.structures.pcloud import PCloud
 from torch.nn import (
     BatchNorm1d,
     BatchNorm2d,
@@ -8,11 +8,11 @@ from torch.nn import (
     Conv2d,
     LeakyReLU,
 )
-from config import settings
+from config.config import settings
 
 
 class DGCNN(torch.nn.Module):
-    def __init__(self, knn: int = 20, emb_dims: int = 1024, latent_dim: int = 128) -> None:
+    def __init__(self, knn: int = 20, emb_dims: int = 1024, latent_dim: int = 256) -> None:
         super(DGCNN, self).__init__()
         self.__device = torch.device(settings.DEVICE)
         self.LATENT_DIM = latent_dim
@@ -60,7 +60,7 @@ class DGCNN(torch.nn.Module):
             LeakyReLU(negative_slope=0.2),
         )
 
-    def forward(self, cloud: Cloud) -> torch.Tensor:
+    def forward(self, cloud: PCloud) -> torch.Tensor:
         features = cloud.points.permute(0, 2, 1).contiguous()
         BATCH_SIZE, NUM_DIMS, NUM_POINTS = features.size()
 

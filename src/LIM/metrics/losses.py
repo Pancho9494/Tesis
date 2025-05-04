@@ -1,7 +1,7 @@
 import aim
 import torch
 import numpy as np
-from typing import Protocol, Tuple
+from typing import Protocol, Tuple, Optional
 from LIM.data.structures.pair import Pair
 from LIM.metrics import Loss
 from debug.decorators import identify_method
@@ -18,23 +18,24 @@ class TrainerStateProtocol(Protocol):
 
 class L1Loss(Loss):
     def __init__(self, trainer_state: TrainerStateProtocol, reduction: str) -> None:
-        super().__init__(trainer_state)
+        super().__init__(trainer_state, also_track=["average"])
         self.reduction = reduction
-        self.loss = torch.nn.L1Loss(self.reduction)
+        self.loss = torch.nn.L1Loss(reduction=self.reduction)
 
     def __repr__(self) -> str:
         return f"L1Loss(reduction={self.reduction})"
 
     def __call__(self, sample: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         predicted, real = sample
-        return self.loss(predicted, real.squeeze(-1)).sum(-1).mean()
+        real = real.T
+        return self.loss(predicted, real).sum(-1).mean()
 
 
 class IOU(Loss):
     THRESHOLD: float
 
     def __init__(self, trainer_state: TrainerStateProtocol, threshold: float) -> None:
-        super().__init__(trainer_state)
+        super().__init__(trainer_state, y0to1=True, also_track=["average"])
         self.THRESHOLD = threshold
 
     def __repr__(self) -> str:
@@ -42,23 +43,31 @@ class IOU(Loss):
 
     def __call__(self, sample: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         predicted, real = sample
-        pred_arr: np.ndarray = (predicted <= 0.01).cpu().numpy()
-        real_arr: np.ndarray = (real <= 0.01).cpu().numpy()
-        if pred_arr.ndim >= 2:
-            pred_arr = pred_arr.reshape(pred_arr.shape[0], -1)
-        if real_arr.ndim >= 2:
-            real_arr = real_arr.reshape(real_arr.shape[0], -1)
+        occ_pred: np.ndarray = (predicted <= 0.01).cpu().numpy()
+        occ_true: np.ndarray = (real <= 0.01).cpu().numpy().T
 
-        pred_arr, real_arr = pred_arr >= self.THRESHOLD, real_arr >= self.THRESHOLD
+        if occ_true.ndim >= 2:
+            occ_true = occ_true.reshape(occ_true.shape[0], -1)
+        if occ_pred.ndim >= 2:
+            occ_pred = occ_pred.reshape(occ_pred.shape[0], -1)
 
-        area_union = (pred_arr | real_arr).astype(np.float32).sum(axis=-1)
-        area_intersect = (pred_arr & real_arr).astype(np.float32).sum(axis=-1)
-        iou = np.divide(area_intersect, area_union, out=np.zeros_like(area_union), where=area_union != 0)
-        return iou.mean()
+        occ_pred = occ_pred >= self.THRESHOLD
+        occ_true = occ_true >= self.THRESHOLD
+
+        union = np.logical_or(occ_true, occ_pred).sum(axis=1)
+        intersection = np.logical_and(occ_true, occ_pred).sum(axis=1)
+        iou_per_sample = np.divide(
+            intersection,
+            union,
+            out=np.zeros_like(intersection, dtype=float),
+            where=union != 0,
+        )
+        return iou_per_sample.mean()
 
 
 class OverlapLoss(Loss):
     weight: float
+    current_overlap_score: Optional[torch.Tensor] = None
 
     def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
         super().__init__(trainer_state, also_track=["average"])
@@ -89,7 +98,7 @@ class OverlapLoss(Loss):
             dim=0,
         )
 
-        return self.weight * self._weighted_BCELoss(pair.overlaps.mix, ground_truth)
+        return self.weight * self._weighted_BCELoss(self.current_overlap_score, ground_truth)
 
     def _weighted_BCELoss(self, prediction: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         """
@@ -103,6 +112,7 @@ class OverlapLoss(Loss):
 
 class MatchabilityLoss(Loss):
     weight: float = 0.0
+    current_saliency_score: Optional[torch.Tensor] = None
 
     def __init__(self, trainer_state: TrainerStateProtocol, weight: float) -> None:
         super().__init__(trainer_state, also_track=["average"])
@@ -122,9 +132,11 @@ class MatchabilityLoss(Loss):
         tgt_idx = pair.correspondences.target_indices
 
         len_src = len(pair.source.first.points)
-        scores = torch.matmul(
-            pair.mix.features[:len_src][src_idx], pair.mix.features[len_src:][tgt_idx].transpose(0, 1)
+        cat_features = torch.cat(
+            (pair.source.features, pair.target.features),
+            dim=torch.argmax(torch.tensor(pair.source.points.shape)).item(),
         )
+        scores = torch.matmul(cat_features[:len_src][src_idx], cat_features[len_src:][tgt_idx].transpose(0, 1))
         ground_truth = torch.cat(
             tensors=(
                 torch.where(
@@ -155,9 +167,9 @@ class MatchabilityLoss(Loss):
             dim=0,
         )
 
-        src_saliency_scores = pair.saliencies.mix[:len_src]
+        src_saliency_scores = self.current_saliency_score[:len_src]
         src_saliency_scores = src_saliency_scores[src_idx]
-        tgt_saliency_scores = pair.saliencies.mix[len_src:]
+        tgt_saliency_scores = self.current_saliency_score[len_src:]
         tgt_saliency_scores = tgt_saliency_scores[tgt_idx]
         scores_saliency = torch.cat((src_saliency_scores, tgt_saliency_scores))
 
@@ -212,10 +224,14 @@ class CircleLoss(Loss):
         if sub_correspondence.shape[0] > self.MAX_POINTS:
             sub_correspondence = sub_correspondence[torch.randperm(sub_correspondence.shape[0])[: self.MAX_POINTS]]
 
+        cat_features = torch.cat(
+            (pair.source.features, pair.target.features),
+            dim=torch.argmax(torch.tensor(pair.source.points.shape)).item(),
+        )
         len_src = len(pair.source.first.points)
         src_idx, tgt_idx = sub_correspondence[:, 0], sub_correspondence[:, 1]
         src_pcd, tgt_pcd = pair.source.first.points[src_idx], pair.target.first.points[tgt_idx]
-        src_feats, tgt_feats = pair.mix.features[:len_src][src_idx], pair.mix.features[len_src:][tgt_idx]
+        src_feats, tgt_feats = cat_features[:len_src][src_idx], cat_features[len_src:][tgt_idx]
 
         global coords_dist, feats_dist
         coords_dist = torch.sqrt(self._square_distance(src_pcd[None, :, :], tgt_pcd[None, :, :]).squeeze(0))

@@ -10,7 +10,7 @@ import submodules.KPConv.cpp_wrappers.cpp_subsampling.grid_subsampling as cpp_su
 import submodules.KPConv.cpp_wrappers.cpp_neighbors.radius_neighbors as cpp_neighbors
 from LIM.data.structures.pcloud import Cloud
 from typing import Tuple, List
-from config import settings
+from config.config import settings
 
 
 class KPConvFPN(torch.nn.Module):

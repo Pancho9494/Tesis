@@ -5,3 +5,4 @@ rich # Better tracebacks
 aim
 pydantic-settings
 multimethod
+pytest
