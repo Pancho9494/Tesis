@@ -53,8 +53,10 @@ class PredatorTrainer(BaseTrainer):
     @handle_OOM
     def _custom_val_step(self, sample: Pair) -> bool:
         sample.correspondences
-        sample = self.model(sample)
+        sample, overlaps, saliencies = self.model(sample)
         sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)
+        self.multi_loss.losses[1].current_overlap_score = overlaps
+        self.multi_loss.losses[2].current_saliency_score = saliencies
         self.multi_loss.val(sample)
         self.feature_match_recall.val(sample)
         self.state.val.on_best_iter = self.multi_loss.val.on_best_iter
