@@ -39,7 +39,7 @@ class Metric(ABC):
 
     @property
     def on_best_iter(self) -> bool:
-        return self.current == self.best
+        return self.current >= self.best
 
     def __call__(self, sample: Any) -> torch.Tensor:
         self.current = (loss := self.custom_function(sample)).item()
@@ -71,7 +71,7 @@ class Metric(ABC):
         return loss
 
     def __repr__(self) -> str:
-        return f"{self.name} [{self.current:5.4f}]"
+        return f"{self.name} [[cyan]{self.current:5.4f}[/cyan]]"
 
     def get(self, value: str) -> float:
         assert (value := value.lower().strip()) in ["best", "current", "total_sum", "average"]
@@ -83,9 +83,10 @@ class Loss(ABC):
 
     train: Metric
     val: Metric
-    device = torch.device(settings.DEVICE)
+    device: torch.device
 
     def __init__(self, trainer_state: TrainerStateProtocol, also_track: List[str] = [], y0to1: bool = False) -> None:
+        self.device = torch.device(settings.DEVICE)
         self.train = Metric(
             name=self.__class__.__name__,
             subset="train",

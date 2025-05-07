@@ -1,16 +1,17 @@
 import torch
 from LIM.data.structures import PCloud
-from LIM.models.blocks import BatchNorm
+from LIM.models.layers import BatchNorm
 from debug.decorators import identify_method
 from config.config import settings
 
 
 class Bias(torch.nn.Module):
     in_dim: int
-    device: torch.device = torch.device(settings.DEVICE)
+    device: torch.device
 
     def __init__(self, in_dim: int) -> None:
         super(Bias, self).__init__()
+        self.device = torch.device(settings.DEVICE)
         self.in_dim = in_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

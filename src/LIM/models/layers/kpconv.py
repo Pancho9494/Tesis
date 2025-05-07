@@ -19,7 +19,7 @@ class KPConv(torch.nn.Module, ABC):
     weights: torch.nn.parameter.Parameter
     kernel_points: torch.nn.parameter.Parameter
     root: Path  # Path to the directory where the kernel points are stored / loaded from
-    device: torch.device = torch.device(settings.DEVICE)
+    device: torch.device
 
     def __init__(
         self,
@@ -29,6 +29,7 @@ class KPConv(torch.nn.Module, ABC):
         n_kernel_points: int = 15,
     ) -> None:
         super(KPConv, self).__init__()
+        self.device = torch.device(settings.DEVICE)
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.KP_radius = radius

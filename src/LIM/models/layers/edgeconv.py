@@ -1,7 +1,7 @@
 import torch
 from typing import Optional
-from LIM.models.blocks import KNNGraph, MaxPool, Conv2D, InstanceNorm2D
-from LIM.models.blocks.leakyrelu import LeakyReLU
+from LIM.models.layers import KNNGraph, MaxPool, Conv2D, InstanceNorm2D
+from LIM.models.layers.leakyrelu import LeakyReLU
 from LIM.data.structures.pcloud import PCloud
 from debug.decorators import identify_method
 

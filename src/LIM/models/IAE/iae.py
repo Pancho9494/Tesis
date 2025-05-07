@@ -2,20 +2,21 @@ from LIM.models.IAE.decoder import LocalDecoder
 from LIM.data.structures import PCloud
 import torch
 from config.config import settings
-from LIM.models.blocks.unet3d import UNet3D
+from LIM.models.layers.unet3d import UNet3D
 import torch_scatter
 from LIM.models.modelI import Model
-from LIM.models.IAE.DGCNNEncoder import DGCNN
+import inspect
+import LIM.log as log
 
 
 class IAE(Model):
-    def __init__(self, encoder: torch.nn.Module) -> None:
+    def __init__(self, model: Model) -> None:
         super(IAE, self).__init__()
         self.LATENT_DIM = settings.MODEL.LATENT_DIM
         self.PADDING = settings.MODEL.PADDING
         self.GRID_RESOLUTION = settings.MODEL.ENCODER.GRID_RES
 
-        self.encoder = encoder
+        self.encoder = self._fetch_encoder_from_model(model)
         self.decoder = LocalDecoder(
             latent_dim=self.LATENT_DIM,
             hidden_size=settings.MODEL.DECODER.HIDDEN_SIZE,
@@ -26,6 +27,15 @@ class IAE(Model):
             d_dim=None,
         )
         self.unet3d = UNet3D(in_channels=self.LATENT_DIM, out_channels=self.LATENT_DIM, num_levels=4, f_maps=32)
+
+    def _fetch_encoder_from_model(self, model: Model) -> torch.nn.Module:
+        model_module = inspect.getmodule(model)
+
+        if not hasattr(model_module, "Encoder"):
+            log.error((msg := "Model classes passed to IAE need to implement an `Encoder` class"))
+            raise ValueError(msg)
+
+        return getattr(model_module, "Encoder")()
 
     @property
     def device(self) -> torch.device:

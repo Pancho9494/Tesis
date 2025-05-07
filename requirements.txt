@@ -6,3 +6,5 @@ aim
 pydantic-settings
 multimethod
 pytest
+msgpack
+msgpack-numpy

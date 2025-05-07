@@ -1,20 +1,29 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
-from typing import Dict, Any, Optional, List
+from pydantic_settings import BaseSettings
+from pydantic import Field, field_serializer
+from typing import Dict, Any, Optional
 import yaml
+from pathlib import Path
+import msgpack
 
 
-def yaml_settings_source(settings: BaseSettings) -> Dict[str, Any]:
-    with open("./config/config.yaml", "r") as f:
-        return yaml.safe_load(f)
+class SerializableSettings(BaseSettings):
+    def save(self, path: Path) -> None:
+        with (path / "config.msgpack").open("wb") as f:
+            msgpack.dump(self.model_dump(), f, use_bin_type=True)
+
+    @classmethod
+    def load(cls, path: Path) -> "SerializableSettings":
+        with (path / "config.msgpack").open("rb") as f:
+            data = msgpack.load(f, raw=False)
+        return cls(**data)
 
 
-class Model(BaseSettings):
-    class Encoder(BaseSettings):
+class Model(SerializableSettings):
+    class Encoder(SerializableSettings):
         N_HIDDEN_LAYERS: int
         GRID_RES: int
 
-    class Decoder(BaseSettings):
+    class Decoder(SerializableSettings):
         HIDDEN_SIZE: int
         N_BLOCKS: int
 
@@ -24,16 +33,22 @@ class Model(BaseSettings):
     DECODER: Decoder
 
 
-class Transforms(BaseSettings):
+class Transforms(SerializableSettings):
     TRAIN: Optional[Dict[str, Dict[str, Any]]] = {}
     VAL: Optional[Dict[str, Dict[str, Any]]] = {}
 
 
-class Trainer(BaseSettings):
-    BATCH_SIZE: int
-    LEARNING_RATE: float
+class LearningRate(SerializableSettings):
+    VALUE: float
     WEIGHT_DECAY: Optional[float] = None
     MOMENTUM: Optional[float] = None
+    SCHEDULER_GAMMA: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class Trainer(SerializableSettings):
+    BACKUP_DIR: Path = Path("./src/LIM/training/backups/")
+    BATCH_SIZE: int
+    LEARNING_RATE: LearningRate
     EPOCHS: int
     ACCUM_STEPS: int = Field(default=1, ge=1)
     VALIDATION_PERIOD: int
@@ -43,9 +58,13 @@ class Trainer(BaseSettings):
     POINTCLOUD_TF: Optional[Transforms] = None
     IMPLICIT_GRID_TF: Optional[Transforms] = None
 
+    @field_serializer("BACKUP_DIR")
+    def serialize_backup_dir(self, backup_dir: Path, _info) -> str:
+        return str(self.BACKUP_DIR)
 
-class Tester(BaseSettings):
-    class Ransac(BaseSettings):
+
+class Tester(SerializableSettings):
+    class Ransac(SerializableSettings):
         MAX_ITERATIONS: int
         MAX_VALIDATION_STEPS: int
         SIMILARITY_THRESHOLD: float
@@ -56,7 +75,7 @@ class Tester(BaseSettings):
     RANSAC: Ransac
 
 
-class Settings(BaseSettings):
+class Settings(SerializableSettings):
     MODEL: Model
     TRAINER: Trainer
     TESTER: Tester

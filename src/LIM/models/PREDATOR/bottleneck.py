@@ -1,7 +1,7 @@
 import torch
 import copy
 from typing import Tuple, Callable, Any
-from LIM.models.blocks import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
+from LIM.models.layers import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures import PCloud, Pair
 from debug.decorators import identify_method
 from config.config import settings

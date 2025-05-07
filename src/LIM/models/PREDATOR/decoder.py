@@ -1,8 +1,8 @@
 import torch
 from typing import List, Any, Tuple
 from LIM.data.structures import PCloud, Pair
-from LIM.models.blocks import Conv1D
-from LIM.models.blocks.nearestupsample import NearestUpsample
+from LIM.models.layers import Conv1D
+from LIM.models.layers.nearestupsample import NearestUpsample
 from config.config import settings
 from multimethod import multimethod
 

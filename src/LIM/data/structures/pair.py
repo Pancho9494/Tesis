@@ -46,11 +46,12 @@ class Pair:
     GT_tf_matrix: Optional[np.ndarray] = None
     prediction: Optional[np.ndarray] = None
     _overlap: Optional[float] = None
-    device: torch.device = torch.device(settings.DEVICE)
+    device: torch.device
 
     def __init__(
         self, source: PCloud, target: PCloud, GT_tf_matrix: Optional[np.ndarray] = None, id: Optional[str] = None
     ) -> None:
+        self.device = torch.device(settings.DEVICE)
         self.id = id
         self.source = source
         self.target = target

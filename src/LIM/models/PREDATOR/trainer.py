@@ -1,17 +1,31 @@
 import torch
+from typing import Optional
 from config.config import settings
-from LIM.models.trainer import BaseTrainer, handle_OOM
+from LIM.training.trainer import BaseTrainer, handle_OOM
 from LIM.metrics import MultiLoss, FeatureMatchRecall, CircleLoss, OverlapLoss, MatchabilityLoss
 from LIM.data.sets import CloudDatasetsI
 from LIM.data.structures import Pair
+from LIM.models.modelI import Model
+import LIM.log as log
+from datetime import datetime
 
 
 class PredatorTrainer(BaseTrainer):
     multi_loss: MultiLoss
     feature_match_recall: FeatureMatchRecall
 
-    def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI) -> None:
-        super(PredatorTrainer, self).__init__(model, dataset)
+    def __init__(
+        self, model: torch.nn.Module, dataset: CloudDatasetsI, mode: Optional[BaseTrainer.Mode] = None
+    ) -> None:
+        super(PredatorTrainer, self).__init__(model, dataset, mode)
+        self.model.to(self.device)
+        self.optimizer = torch.optim.SGD(
+            self.model.parameters(),
+            lr=settings.TRAINER.LEARNING_RATE.VALUE,
+            weight_decay=settings.TRAINER.LEARNING_RATE.WEIGHT_DECAY,
+            momentum=settings.TRAINER.LEARNING_RATE.MOMENTUM,
+        )
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95)
         self.multi_loss = MultiLoss(
             losses=[
                 CircleLoss(trainer_state=self.state, weight=1.0),
@@ -21,7 +35,10 @@ class PredatorTrainer(BaseTrainer):
         )
         self.feature_match_recall = FeatureMatchRecall(trainer_state=self.state)
 
-    # @handle_OOM
+    def _load_model(self, model: Model) -> None:
+        self.model = model()
+
+    @handle_OOM
     def _custom_train_step(self, sample: Pair) -> bool:
         sample.correspondences
         sample, overlaps, saliencies = self.model(sample)
@@ -33,7 +50,7 @@ class PredatorTrainer(BaseTrainer):
         loss.backward()
         return True
 
-    # @handle_OOM
+    @handle_OOM
     def _custom_val_step(self, sample: Pair) -> bool:
         sample.correspondences
         sample = self.model(sample)
@@ -45,11 +62,15 @@ class PredatorTrainer(BaseTrainer):
 
     def _custom_epoch_step(self) -> None:
         self.multi_loss.losses[-1].weight = 1.0 if self.feature_match_recall.val.get("average") > 0.3 else 0.0
+        self.scheduler.step()
+        log.info(f"Current learning rate: {self.scheduler.get_last_lr()}")
 
-    def _custom_loss_log(self, mode: str) -> None:
+    def _custom_loss_log(self, mode: str) -> str:
         assert (mode := mode.lower()) in ["train", "val"]
-        print(
-            f"{mode.upper()}:\t{getattr(self.state, mode).log_header}"
+        mode_color = "orange1" if mode == "train" else "bright_blue"
+        return (
+            f"[{mode_color}][{datetime.now().strftime('%H:%M:%S')}][/{mode_color}]"
+            + f" [bold {mode_color}][{mode.upper()}][/bold {mode_color}] {getattr(self.state, mode).log_header}"
             + f" FMR[{getattr(self.feature_match_recall, mode).get('average'):5.4f}]"
             + f" {getattr(self.multi_loss, mode)}"
             + f" = {[getattr(loss, mode) for loss in self.multi_loss.losses]}"

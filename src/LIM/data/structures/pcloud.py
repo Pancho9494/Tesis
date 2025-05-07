@@ -39,9 +39,8 @@ class Shape:
 
 
 class PCloud:
-    device: torch.device = torch.device(settings.DEVICE)
-    o3ddevice: str = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
-
+    device: torch.device
+    o3ddevice: str
     pcd: o3d.t.geometry.PointCloud
     _features: torch.Tensor
     _sub: Optional["PCloud"] = None
@@ -53,6 +52,8 @@ class PCloud:
     path: Optional[Path] = None
 
     def __init__(self) -> None:
+        PCloud.device = torch.device(settings.DEVICE)
+        PCloud.o3ddevice = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
         self._features = torch.tensor([], device=self.device, requires_grad=False)
 
     def __len__(self) -> int:

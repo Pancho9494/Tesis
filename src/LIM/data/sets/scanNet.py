@@ -110,7 +110,6 @@ class ScanNet(CloudDatasetsI):
             with open(room / f"{split.value}.lst") as file:
                 subset = file.read().splitlines()
             instance.scenes.extend([room / filename for filename in subset if filename and (room / filename).exists()])
-        print(f"Loaded {cls.__name__}.{split.value} with {len(instance)} scenes")
         return instance
 
     @property

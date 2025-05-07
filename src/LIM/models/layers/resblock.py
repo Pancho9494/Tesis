@@ -1,7 +1,7 @@
 import torch
-from LIM.models.blocks import BatchNorm, Conv1D, KPConvNeighbors, KPConvPools
-from LIM.models.blocks.leakyrelu import LeakyReLU
-from LIM.models.blocks.maxpool import MaxPoolNeighbors
+from LIM.models.layers import BatchNorm, Conv1D, KPConvNeighbors, KPConvPools
+from LIM.models.layers.leakyrelu import LeakyReLU
+from LIM.models.layers.maxpool import MaxPoolNeighbors
 from LIM.data.structures import PCloud
 from copy import copy
 from debug.decorators import identify_method

@@ -1,23 +1,21 @@
 MODEL:
+  PADDING: 0.1
   ENCODER:
     N_HIDDEN_LAYERS: 2
-    KNN: 20
-    EMB_DIM: 1024
-    PADDING: 0.1
     GRID_RES: 32
   LATENT_DIM: 256
   DECODER:
     HIDDEN_SIZE: 32
     N_BLOCKS: 5
-    PADDING: 0.1
 
 DEVICE: "cuda"
 
 TRAINER:
     BATCH_SIZE: 1
-    LEARNING_RATE: 5e-3
-    WEIGHT_DECAY: 1e-6
-    MOMENTUM: 0.98
+    LEARNING_RATE: 
+      VALUE: 5e-3
+      WEIGHT_DECAY: 1e-6
+      MOMENTUM: 0.98
     EPOCHS: 40
     ACCUM_STEPS: 1
     VALIDATION_PERIOD: 1
@@ -34,7 +32,7 @@ TRAINER:
         # NOISE:
         #   NOISE: 0.005
 
-      VALIDATION:
+      VAL:
         # CENTERZRANDOM:
         #   BASE_RATIO: 0.5
         # DOWNSAMPLE:

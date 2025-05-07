@@ -1,3 +1,7 @@
+# backups
+src/LIM/training/backups/IAE
+src/LIM/training/backups/PREDATOR
+
 # device-specific files
 .aim/
 .vscode/
