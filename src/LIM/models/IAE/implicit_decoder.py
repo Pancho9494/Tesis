@@ -32,7 +32,7 @@ class ResnetBlockFC(nn.Module):
         return input + shortcut
 
 
-class LocalDecoder(nn.Module):
+class ImplicitDecoder(nn.Module):
     class SampleModes(Enum):
         BILINEAR = "bilinear"
 
@@ -47,25 +47,17 @@ class LocalDecoder(nn.Module):
         leaky: bool = False,
         sample_mode: SampleModes = SampleModes.BILINEAR,
         padding: float = 0.1,
-        d_dim: Optional[int] = None,
     ):
-        super(LocalDecoder, self).__init__()
-        self.latent_dim = latent_dim if d_dim is None else d_dim
+        super(ImplicitDecoder, self).__init__()
+        self.latent_dim = latent_dim
         self.n_blocks = n_blocks
-
         self.fc_c = nn.ModuleList([nn.Linear(self.latent_dim, hidden_size) for i in range(n_blocks)])
-
         self.fc_p = nn.Linear(3, hidden_size)
-
         self.blocks = nn.ModuleList([ResnetBlockFC(hidden_size) for i in range(n_blocks)])
-
         self.fc_out = nn.Linear(hidden_size, 1)
-
         self.actvn = F.relu if (not leaky) else lambda x: F.leaky_relu(x, 0.2)
-
         self.sample_mode = sample_mode
         self.padding = padding
-
         self.th = nn.Tanh()
 
     @property

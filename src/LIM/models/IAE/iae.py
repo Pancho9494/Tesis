@@ -1,4 +1,4 @@
-from LIM.models.IAE.decoder import LocalDecoder
+from LIM.models.IAE.implicit_decoder import ImplicitDecoder
 from LIM.data.structures import PCloud
 import torch
 from config.config import settings
@@ -17,14 +17,17 @@ class IAE(Model):
         self.GRID_RESOLUTION = settings.MODEL.ENCODER.GRID_RES
 
         self.encoder = self._fetch_encoder_from_model(model)
-        self.decoder = LocalDecoder(
+        if settings.ENCODER.FREEZE:
+            log.info(f"Training with {self.encoder} weights frozen")
+            for p in self.encoder.parameters():
+                p.requires_grad = False
+        self.decoder = ImplicitDecoder(
             latent_dim=self.LATENT_DIM,
             hidden_size=settings.MODEL.DECODER.HIDDEN_SIZE,
             n_blocks=settings.MODEL.DECODER.N_BLOCKS,
             leaky=False,
-            sample_mode=LocalDecoder.SampleModes.BILINEAR,
+            sample_mode=ImplicitDecoder.SampleModes.BILINEAR,
             padding=self.PADDING,
-            d_dim=None,
         )
         self.unet3d = UNet3D(in_channels=self.LATENT_DIM, out_channels=self.LATENT_DIM, num_levels=4, f_maps=32)
 

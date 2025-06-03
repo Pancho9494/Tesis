@@ -1,0 +1,27 @@
+Bootstrap: docker-daemon
+From: lim/cuda12.4-cudnn9:latest
+
+%labels
+    Author Francisco Molina
+    Version v1.1
+
+%environment
+    export NVIDIA_VISIBLE_DEVICES=all
+    export NVIDIA_DRIVER_CAPABILITIES=all
+    export HSA_OVERRIDE_GFX_VERSION=10.3.0
+
+%runscript
+    exec /bin/bash "$@"
+
+%help
+    Build:
+      apptainer build iae.sif Singularity.def
+
+    Run interactively:
+      apptainer shell --nv \\
+        --bind /tmp/.X11-unix:/tmp/.X11-unix \\
+        iae.sif
+
+    Inside:
+      cd /dockerx/LIM/src
+

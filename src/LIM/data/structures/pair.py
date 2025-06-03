@@ -51,7 +51,7 @@ class Pair:
     def __init__(
         self, source: PCloud, target: PCloud, GT_tf_matrix: Optional[np.ndarray] = None, id: Optional[str] = None
     ) -> None:
-        self.device = torch.device(settings.DEVICE)
+        self.device = "cpu" if settings is None else torch.device(settings.DEVICE)
         self.id = id
         self.source = source
         self.target = target
@@ -66,6 +66,17 @@ class Pair:
 
     def __iter__(self) -> Iterable[Tuple[PCloud, PCloud]]:
         return iter((self.source, self.target))
+
+    def overlap(self, threshold: float = 0.03) -> float:
+        pcd_tree = o3d.geometry.KDTreeFlann(self.target.pcd.to_legacy())
+        match_count = 0
+        for i, point in enumerate(self.source.points):
+            [count, _, _] = pcd_tree.search_radius_vector_3d(point, threshold)
+            if count != 0:
+                match_count += 1
+
+        overlap_ratio = match_count / len(self.source.points)
+        return overlap_ratio
 
     def split(self) -> "Pair":
         foo = max(tuple(self.source.shape))
@@ -231,7 +242,7 @@ class Pair:
 
     def show(self, predicted_tf: np.ndarray | None = None) -> None:
         WIDTH, HEIGHT = 1280, 720
-        ROTATE_X, ROTATE_Y = 10.0, 0.0
+        ROTATE_X, ROTATE_Y = 1.0, 0.0
         YELLOW, BLUE = np.array([1.0, 0.706, 0.0]), np.array([0.0, 0.651, 0.929])
         WHITE = np.array([1, 1, 1])
 
@@ -241,20 +252,6 @@ class Pair:
         vis.create_window(window_name="raw", width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
         vis.add_geometry(src_pcd.pcd)
         vis.add_geometry(tgt_pcd.pcd)
-
-        # vis2 = o3d.visualization.Visualizer()
-        # vis2.create_window(window_name="overlaps", width=WIDTH, height=HEIGHT, left=WIDTH, top=0)
-        # gt_src_pcd = copy.deepcopy(self.source.pcd)
-        # gt_src_pcd.transform(self.GT_tf_matrix)
-        # gt_src_pcd.colors = o3d.utility.Vector3dVector(
-        #     YELLOW + (WHITE - YELLOW) * (1 - self.overlaps.src[:, None].repeat(1, 3).cpu().numpy())
-        # )
-        # gt_tgt = copy.deepcopy(self.target)
-        # gt_tgt.pcd.colors = o3d.utility.Vector3dVector(
-        #     BLUE + (WHITE - BLUE) * (1 - self.overlaps.target[:, None].repeat(1, 3).cpu().numpy())
-        # )
-        # vis2.add_geometry(gt_src_pcd)
-        # vis2.add_geometry(gt_tgt.pcd)
 
         if predicted_tf is not None:
             vis3 = o3d.visualization.Visualizer()

@@ -52,8 +52,9 @@ class PCloud:
     path: Optional[Path] = None
 
     def __init__(self) -> None:
-        PCloud.device = torch.device(settings.DEVICE)
-        PCloud.o3ddevice = "CUDA:0" if settings.DEVICE.lower() in ["cuda"] else "CPU:0"
+        self.device = "cpu" if settings is None else settings.DEVICE
+        PCloud.device = torch.device(self.device)
+        PCloud.o3ddevice = "CUDA:0" if self.device.lower() in ["cuda"] else "CPU:0"
         self._features = torch.tensor([], device=self.device, requires_grad=False)
 
     def __len__(self) -> int:

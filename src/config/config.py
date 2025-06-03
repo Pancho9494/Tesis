@@ -22,6 +22,7 @@ class Model(SerializableSettings):
     class Encoder(SerializableSettings):
         N_HIDDEN_LAYERS: int
         GRID_RES: int
+        FREEZE: bool = False
 
     class Decoder(SerializableSettings):
         HIDDEN_SIZE: int

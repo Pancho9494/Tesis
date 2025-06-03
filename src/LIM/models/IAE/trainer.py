@@ -34,6 +34,8 @@ class IAETrainer(BaseTrainer):
 
     @handle_OOM
     def _custom_train_step(self, sample: Tuple[PCloud, PCloud]) -> bool:
+        if settings.ENCODER.FREEZE:
+            self.model.encoder.val()
         og_points = copy.copy(sample[0])
         cloud, implicit = sample
         predicted_df = self.model(cloud, implicit)

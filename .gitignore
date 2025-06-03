@@ -1,3 +1,6 @@
+# apptainer sif files
+*.sif
+
 # backups
 src/LIM/training/backups/IAE
 src/LIM/training/backups/PREDATOR
