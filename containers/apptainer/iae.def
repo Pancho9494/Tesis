@@ -11,11 +11,11 @@ From: lim/cuda12.4-cudnn9:latest
     export HSA_OVERRIDE_GFX_VERSION=10.3.0
 
 %runscript
-    exec /bin/bash "$@"
+    exec uv run src/main.py
 
 %help
     Build:
-      apptainer build iae.sif Singularity.def
+      apptainer build iae.sif iae.def
 
     Run interactively:
       apptainer shell --nv \\
