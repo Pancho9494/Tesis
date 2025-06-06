@@ -1,8 +1,10 @@
+#syntax=docker/dockerfile:1.7-labs
 FROM bitnami/minideb:bookworm AS builder
 RUN useradd -m appuser
 
 WORKDIR /home/appuser/LIM
-COPY src/ /home/appuser/LIM/src/
+COPY --exclude=**/submodules/** src/ /home/appuser/LIM/src/
+COPY src/submodules/IAE /home/appuser/LIM/src/submodules/IAE
 COPY pyproject.toml /home/appuser/LIM/pyproject.toml
 USER root
 RUN chown -R appuser:appuser /home/appuser && \
