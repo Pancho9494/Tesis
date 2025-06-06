@@ -21,7 +21,7 @@ RUN chown -R appuser:appuser /home/appuser && \
 USER appuser
 RUN bash -c "set -euo pipefail; wget -q https://astral.sh/uv/install.sh; bash install.sh; rm install.sh"
 ENV PATH="/home/appuser/.local/bin:${PATH}"
-RUN uv sync && uv pip install torch-scatter -f https://data.pyg.org/whl/torch-2.4.1+cu124.html
+RUN uv sync && uv pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
 WORKDIR /home/appuser/LIM/src/LIM/cpp/
 RUN bash compile.sh
 WORKDIR /home/appuser/LIM/
