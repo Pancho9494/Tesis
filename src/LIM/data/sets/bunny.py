@@ -28,9 +28,9 @@ class Bunny:
         self._path.mkdir(parents=True, exist_ok=True)
         self.__download_source()
         self.pcd = o3d.io.read_point_cloud(self._path / "reconstruction/bun_zipper.ply")
-        for overlap_ratio in [i / 10.0 for i in range(10, -1, -1)]:
-            print(f"Showing ~{overlap_ratio * 100:0.0f}% of overlap from centroid", end="")
-            self.split(overlap=overlap_ratio)
+        # for overlap_ratio in [i / 10.0 for i in range(10, -1, -1)]:
+        #     print(f"Showing ~{overlap_ratio * 100:0.0f}% of overlap from centroid", end="")
+        #     self.split(overlap=overlap_ratio)
 
     def __download_source(self) -> None:
         if any(self._path.iterdir()):

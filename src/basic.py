@@ -47,6 +47,7 @@ def main():
     encoder = import_without_init(
         path_to_file=(IAE_PATH := Path("src/submodules/IAE/")) / "src/encoder/dgcnn_semseg.py",
         class_name="DGCNN_semseg",
+        dependencies=[IAE_PATH],
     )
     decoder = import_without_init(
         path_to_file=IAE_PATH / "src/dfnet/models/decoder.py",
