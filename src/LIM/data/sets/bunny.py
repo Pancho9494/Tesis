@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 import numpy as np
 import LIM.log as log
 import urllib.request
@@ -20,7 +21,7 @@ class Bunny:
         MEAN = partial(np.mean)
         MEDIAN = partial(np.median)
 
-        def __call__(self, *args, **kwargs) -> any:
+        def __call__(self, *args, **kwargs) -> Any:
             return self.value(*args, **kwargs)
 
     def __init__(self) -> None:
@@ -32,7 +33,7 @@ class Bunny:
             self.split(overlap=i)
 
     def __download_source(self) -> None:
-        if _dir_is_not_empty := any(self._path.iterdir()):
+        if any(self._path.iterdir()):
             return
 
         SOURCE = "http://graphics.stanford.edu/pub/3Dscanrep/bunny.tar.gz"
@@ -61,6 +62,7 @@ class Bunny:
         )
         print(f" Real overlap: {pair.overlap(0.00001):0.2f}")
         pair.show()
+        return pair
 
-    def find_midpoint(self, via: Midpoint) -> list[float, float, float]:
+    def find_midpoint(self, via: Midpoint) -> list[float]:
         return [via(ax) for ax in np.asarray(self.pcd.points).T]
