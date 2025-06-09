@@ -59,7 +59,13 @@ class LearningRate(SerializableSettings):
     MOMENTUM: Optional[float] = None
 
 
+class AvailableTrainingModes(str, Enum):
+    NEW = "new"
+    LATEST = "latest"
+
+
 class Trainer(SerializableSettings):
+    MODE: AvailableTrainingModes
     BACKUP_DIR: Path = Path("./src/LIM/training/backups/")
     BATCH_SIZE: int
     LEARNING_RATE: LearningRate

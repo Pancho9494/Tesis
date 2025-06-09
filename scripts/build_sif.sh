@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 
 # Does the docker image already exist?
 if [ -z "$(docker images -q lim/cuda12.4-cudnn9:latest 2>/dev/null)" ]; then

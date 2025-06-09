@@ -13,6 +13,7 @@ MODEL:
 DEVICE: "cuda"
 
 TRAINER:
+  MODE: "new"
   BATCH_SIZE: 1
   LEARNING_RATE:
     OPTIMIZER: "sgd"

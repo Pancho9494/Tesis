@@ -11,7 +11,7 @@ From: lim/cuda12.4-cudnn9:latest
     export HSA_OVERRIDE_GFX_VERSION=10.3.0
 
 %runscript
-    exec uv run src/main.py
+    exec uv run src/main.py "$@"
 
 %help
     Build:
