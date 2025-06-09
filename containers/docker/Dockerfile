@@ -28,7 +28,7 @@ RUN bash -c "set -euo pipefail; wget -q https://astral.sh/uv/install.sh; bash in
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 RUN uv sync && uv pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
 WORKDIR /home/appuser/LIM/src/LIM/cpp/
-RUN bash compile.sh
+RUN bash -c "set -euo pipefail; bash compile.sh"
 WORKDIR /home/appuser/LIM/
 
 FROM bitnami/minideb:bookworm AS production 

@@ -103,14 +103,14 @@ static PyObject* batch_subsampling(PyObject* self, PyObject* args, PyObject* key
 		use_classes = false;
 
 	// Interpret the input objects as numpy arrays.
-	PyObject* points_array = PyArray_FROM_OTF(points_obj, NPY_FLOAT, NPY_IN_ARRAY);
-	PyObject* batches_array = PyArray_FROM_OTF(batches_obj, NPY_INT, NPY_IN_ARRAY);
+	PyObject* points_array = PyArray_FROM_OTF(points_obj, NPY_FLOAT, NPY_ARRAY_IN_ARRAY);
+	PyObject* batches_array = PyArray_FROM_OTF(batches_obj, NPY_INT, NPY_ARRAY_IN_ARRAY);
 	PyObject* features_array = NULL;
 	PyObject* classes_array = NULL;
 	if (use_feature)
-		features_array = PyArray_FROM_OTF(features_obj, NPY_FLOAT, NPY_IN_ARRAY);
+		features_array = PyArray_FROM_OTF(features_obj, NPY_FLOAT, NPY_ARRAY_IN_ARRAY);
 	if (use_classes)
-		classes_array = PyArray_FROM_OTF(classes_obj, NPY_INT, NPY_IN_ARRAY);
+		classes_array = PyArray_FROM_OTF(classes_obj, NPY_INT, NPY_ARRAY_IN_ARRAY);
 
 	// Verify data was load correctly.
 	if (points_array == NULL)
@@ -377,13 +377,13 @@ static PyObject* cloud_subsampling(PyObject* self, PyObject* args, PyObject* key
 		use_classes = false;
 
 	// Interpret the input objects as numpy arrays.
-	PyObject* points_array = PyArray_FROM_OTF(points_obj, NPY_FLOAT, NPY_IN_ARRAY);
+	PyObject* points_array = PyArray_FROM_OTF(points_obj, NPY_FLOAT, NPY_ARRAY_IN_ARRAY);
 	PyObject* features_array = NULL;
 	PyObject* classes_array = NULL;
 	if (use_feature)
-		features_array = PyArray_FROM_OTF(features_obj, NPY_FLOAT, NPY_IN_ARRAY);
+		features_array = PyArray_FROM_OTF(features_obj, NPY_FLOAT, NPY_ARRAY_IN_ARRAY);
 	if (use_classes)
-		classes_array = PyArray_FROM_OTF(classes_obj, NPY_INT, NPY_IN_ARRAY);
+		classes_array = PyArray_FROM_OTF(classes_obj, NPY_INT, NPY_ARRAY_IN_ARRAY);
 
 	// Verify data was load correctly.
 	if (points_array == NULL)

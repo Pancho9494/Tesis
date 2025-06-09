@@ -80,10 +80,10 @@ static PyObject* batch_neighbors(PyObject* self, PyObject* args, PyObject* keywd
 
 
 	// Interpret the input objects as numpy arrays.
-	PyObject* queries_array = PyArray_FROM_OTF(queries_obj, NPY_FLOAT, NPY_IN_ARRAY);
-	PyObject* supports_array = PyArray_FROM_OTF(supports_obj, NPY_FLOAT, NPY_IN_ARRAY);
-	PyObject* q_batches_array = PyArray_FROM_OTF(q_batches_obj, NPY_INT, NPY_IN_ARRAY);
-	PyObject* s_batches_array = PyArray_FROM_OTF(s_batches_obj, NPY_INT, NPY_IN_ARRAY);
+	PyObject* queries_array = PyArray_FROM_OTF(queries_obj, NPY_FLOAT, NPY_ARRAY_IN_ARRAY);
+	PyObject* supports_array = PyArray_FROM_OTF(supports_obj, NPY_FLOAT, NPY_ARRAY_IN_ARRAY);
+	PyObject* q_batches_array = PyArray_FROM_OTF(q_batches_obj, NPY_INT, NPY_ARRAY_IN_ARRAY);
+	PyObject* s_batches_array = PyArray_FROM_OTF(s_batches_obj, NPY_INT, NPY_ARRAY_IN_ARRAY);
 
 	// Verify data was load correctly.
 	if (queries_array == NULL)
