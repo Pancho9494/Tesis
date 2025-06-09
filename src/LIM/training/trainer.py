@@ -63,15 +63,17 @@ class BaseTrainer(ABC):
         match self._settings.TRAINER.LEARNING_RATE.OPTIMIZER:
             case config.AvailableOptimizers.ADAM:
                 self.optimizer = torch.optim.Adam(
-                    self.model.parameters(), lr=self._settings.TRAINER.LEARNING_RATE.VALUE
+                    self.model.parameters(), lr=(_lr := self._settings.TRAINER.LEARNING_RATE.VALUE)
                 )
+                log.info(f"Chose ADAM optimizer (lr={_lr})")
             case config.AvailableOptimizers.SGD:
                 self.optgmizer = torch.optim.SGD(
                     self.model.parameters(),
-                    lr=self._settings.TRAINER.LEARNING_RATE.VALUE,
-                    weight_decay=self.TRAINER.LEARNING_RATE.WEIGHT_DECAY,
-                    momentum=self.TRAINER.LEARNING_RATE.MOMENTUM,
+                    lr=(_lr := self._settings.TRAINER.LEARNING_RATE.VALUE),
+                    weight_decay=(_wd := self.TRAINER.LEARNING_RATE.WEIGHT_DECAY),
+                    momentum=(_mm := self.TRAINER.LEARNING_RATE.MOMENTUM),
                 )
+                log.info(f"Chose SGD optimizer (lr={_lr}, weight_decay={_wd}, momentum={_mm}")
         self.state = RunState(run_name=f"{self.BACKUP_DIR.parent.stem}/{self.BACKUP_DIR.stem}")
         self.__load_config(mode := mode if mode is not None else BaseTrainer.Mode.NEW)
         self.__load_dataloaders(dataset)
