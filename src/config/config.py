@@ -1,6 +1,7 @@
+from enum import Enum
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_serializer
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Self
 import yaml
 from pathlib import Path
 import msgpack
@@ -18,6 +19,12 @@ class SerializableSettings(BaseSettings):
         return cls(**data)
 
 
+class AvailableModules(str, Enum):
+    IAE = "IAE"
+    PREDATOR = "PREDATOR"
+    PREDATOR_PRE_TRAINED = "PREDATOR"
+
+
 class Model(SerializableSettings):
     class Encoder(SerializableSettings):
         N_HIDDEN_LAYERS: int
@@ -28,6 +35,7 @@ class Model(SerializableSettings):
         HIDDEN_SIZE: int
         N_BLOCKS: int
 
+    MODULE: AvailableModules
     PADDING: float
     ENCODER: Encoder
     LATENT_DIM: int
@@ -39,11 +47,16 @@ class Transforms(SerializableSettings):
     VAL: Optional[Dict[str, Dict[str, Any]]] = {}
 
 
+class AvailableOptimizers(str, Enum):
+    ADAM = "adam"
+    SGD = "sgd"
+
+
 class LearningRate(SerializableSettings):
+    OPTIMIZER: AvailableOptimizers
     VALUE: float
     WEIGHT_DECAY: Optional[float] = None
     MOMENTUM: Optional[float] = None
-    SCHEDULER_GAMMA: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class Trainer(SerializableSettings):

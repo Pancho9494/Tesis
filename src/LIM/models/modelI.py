@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from os import PathLike
 from pathlib import Path
 import torch
 import config.config as config
@@ -18,7 +19,7 @@ class Model(ABC, torch.nn.Module):
     @abstractmethod
     def forward(self, *args, **kwargs) -> any: ...
 
-    def load(self, run: str = "", suffix: str = "") -> None:
+    def load(self, run: str | Path | PathLike = "", suffix: str = "") -> None:
         """
         Load model weights from a .msgpack file in the training/backups dir.
 
@@ -63,5 +64,5 @@ class Model(ABC, torch.nn.Module):
             )
             f.write(data)
 
-    def save_async(self, run: str = "", suffix: str = "") -> None:
+    def save_async(self, run: str | Path | PathLike = "", suffix: str = "") -> None:
         backup_executor.submit(self.save, run, suffix)

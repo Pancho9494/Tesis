@@ -1,24 +1,26 @@
-from abc import ABC, abstractmethod
-from functools import partial
+import functools
 import gc
 import multiprocessing as mp
-import torch
-from typing import Any, Callable, Optional, Tuple
-import functools
-import config.config as config
-from LIM.data.sets import CloudDatasetsI
-from LIM.training.run_state import RunState
-from enum import Enum
-from pathlib import Path
+from abc import ABC, abstractmethod
 from datetime import datetime
+from enum import Enum
+from functools import partial
+from pathlib import Path
+from typing import Any, Callable, Optional, Type
+
+import torch
+from torch.optim.lr_scheduler import LRScheduler
+
+import config.config as config
 import LIM.log as log
+from LIM.data.sets import CloudDatasetsI
 from LIM.models.modelI import Model
-import LIM.log as log
+from LIM.training.run_state import RunState
 
 
-def handle_OOM(func: Callable) -> bool:
+def handle_OOM(func: Callable) -> Callable:
     @functools.wraps(func)
-    def inner(*args, **kwargs) -> Any:
+    def inner(*args, **kwargs) -> bool:
         try:
             func(*args, **kwargs)
             return True
@@ -42,18 +44,34 @@ class BaseTrainer(ABC):
     mode: Path
     device: torch.device
     state: RunState
-    model: torch.nn.Module
+    model: Model
     dataloader: torch.utils.data.DataLoader
     dataset: CloudDatasetsI
     optimizer: torch.optim.Optimizer
-    scheduler: torch.optim.lr_scheduler
+    scheduler: LRScheduler
+    _settings: config.Settings
 
-    def __init__(self, model: torch.nn.Module, dataset: CloudDatasetsI, mode: Optional["Mode"] = None) -> None:
-        BaseTrainer.device = torch.device(config.settings.DEVICE)
+    def __init__(self, model: Type[Model], dataset: Type[CloudDatasetsI], mode: "Mode") -> None:
+        assert config.settings is not None
+        self._settings = config.settings
+        mode = mode if mode is not None else BaseTrainer.Mode.NEW
+        BaseTrainer.device = torch.device(self._settings.DEVICE)
         self._load_model(model)
         self.BACKUP_DIR = mode.path(to=self.model.__class__.__name__)
         log.info(f"Running {mode._name_} training on {self.BACKUP_DIR}")
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=config.settings.TRAINER.LEARNING_RATE.VALUE)
+
+        match self._settings.TRAINER.LEARNING_RATE.OPTIMIZER:
+            case config.AvailableOptimizers.ADAM:
+                self.optimizer = torch.optim.Adam(
+                    self.model.parameters(), lr=self._settings.TRAINER.LEARNING_RATE.VALUE
+                )
+            case config.AvailableOptimizers.SGD:
+                self.optgmizer = torch.optim.SGD(
+                    self.model.parameters(),
+                    lr=self._settings.TRAINER.LEARNING_RATE.VALUE,
+                    weight_decay=self.TRAINER.LEARNING_RATE.WEIGHT_DECAY,
+                    momentum=self.TRAINER.LEARNING_RATE.MOMENTUM,
+                )
         self.state = RunState(run_name=f"{self.BACKUP_DIR.parent.stem}/{self.BACKUP_DIR.stem}")
         self.__load_config(mode := mode if mode is not None else BaseTrainer.Mode.NEW)
         self.__load_dataloaders(dataset)
@@ -61,15 +79,12 @@ class BaseTrainer(ABC):
     def __load_config(self, mode: "Mode"):
         match mode:
             case BaseTrainer.Mode.NEW:
-                config.settings.save(self.BACKUP_DIR)
+                self._settings.save(self.BACKUP_DIR)
             case BaseTrainer.Mode.FIXED | BaseTrainer.Mode.LATEST:
                 log.info("Overwriting default settings")
-                config.settings = config.Settings.load(self.BACKUP_DIR)
+                self._settings = config.Settings.load(self.BACKUP_DIR)
                 self.model.load(run=self.BACKUP_DIR, suffix="latest")
                 self.state.load(run=self.BACKUP_DIR, suffix="latest")
-            case _:
-                log.error(f"Invalid BaseTrainer.Mode given to BaseTrainer.__load_config: {mode}")
-                raise ValueError
 
     def __load_dataloaders(self, dataset: CloudDatasetsI) -> None:
         self.train_set, self.val_set = (
@@ -79,11 +94,11 @@ class BaseTrainer(ABC):
 
         self.train_loader = self.make_dataloader(
             self.train_set,
-            num_workers=mp.cpu_count() - 4 if config.settings.TRAINER.MULTIPROCESSING else 0,
+            num_workers=mp.cpu_count() - 4 if self._settings.TRAINER.MULTIPROCESSING else 0,
         )
         self.val_loader = self.make_dataloader(
             self.val_set,
-            num_workers=2 if config.settings.TRAINER.MULTIPROCESSING else 0,
+            num_workers=2 if self._settings.TRAINER.MULTIPROCESSING else 0,
         )
         log.info(
             f"Loaded {dataset.__name__}: training set has {len(self.train_set)} samples, validation set has {len(self.val_set)} samples"
@@ -93,7 +108,7 @@ class BaseTrainer(ABC):
         return self.__class__.__name__
 
     @abstractmethod
-    def _load_model(self, model: Model) -> None: ...
+    def _load_model(self, model: Type[Model]) -> None: ...
 
     @abstractmethod
     def _custom_train_step(self, sample: Any) -> bool:
@@ -120,7 +135,7 @@ class BaseTrainer(ABC):
         ...
 
     @abstractmethod
-    def _custom_epoch_step() -> None:
+    def _custom_epoch_step(self) -> None:
         """
         Anything you want to run after an epoch ends, e.g. a learning rate scheduler step
         """
@@ -137,7 +152,7 @@ class BaseTrainer(ABC):
         ...
 
     def train(self) -> None:
-        for self.state.train.epoch in range(self.state.train.epoch, config.settings.TRAINER.EPOCHS):
+        for self.state.train.epoch in range(self.state.train.epoch, self._settings.TRAINER.EPOCHS):
             self.state.val.epoch = self.state.train.epoch
             self.optimizer.zero_grad()
             self.__clean_memory()
@@ -205,12 +220,12 @@ class BaseTrainer(ABC):
     ) -> torch.utils.data.DataLoader:
         return torch.utils.data.DataLoader(
             dataset=dataset,
-            batch_size=config.settings.TRAINER.BATCH_SIZE,
+            batch_size=self._settings.TRAINER.BATCH_SIZE,
             shuffle=True,
             collate_fn=partial(dataset.collate_fn),
             num_workers=num_workers,
-            multiprocessing_context="spawn" if config.settings.TRAINER.MULTIPROCESSING else None,
-            persistent_workers=True if config.settings.TRAINER.MULTIPROCESSING else False,
+            multiprocessing_context="spawn" if self._settings.TRAINER.MULTIPROCESSING else None,
+            persistent_workers=True if self._settings.TRAINER.MULTIPROCESSING else False,
         )
 
     class Mode(Enum):
@@ -224,41 +239,45 @@ class BaseTrainer(ABC):
         NEW = "Create a new run"
         FIXED = "Choose a run with YYYYMMDD_HHMMSS format"
         LATEST = "Start with latest run present in the backups folder"
+        _date: Optional[datetime]
+        _settings: config.Settings
 
         def __init__(self, *args, **kwargs):
-            self._path = None
+            self._date = None
+            assert config.settings is not None
+            self._settings = config.settings
 
-        def dated(self, path: str) -> "BaseTrainer.Mode":
-            self._path = path
+        def dated(self, date: str | datetime) -> "BaseTrainer.Mode":
+            self._date = date if date is datetime else datetime.strptime(str(date), "%Y%m%d_%H%M%S")
             return self
 
-        def path(self, to: str) -> Path:
+        def date(self, to: str) -> Path:
             """
             This method references _model_name, which is only set in BaseTrainer.__init__, so this can't be
             called unless we
             """
-            resulting_path = config.settings.TRAINER.BACKUP_DIR / to
+            resulting_path = self._settings.TRAINER.BACKUP_DIR / to
             DATE_FORMAT = "%Y%m%d_%H%M%S"
             match self:
                 case BaseTrainer.Mode.NEW:
-                    if self._path is not None:
-                        log.warn(f"Given date {self._path} will be ignored with selected mode NEW")
+                    if self._date is not None:
+                        log.warn(f"Given date {self._date} will be ignored with selected mode NEW")
 
                     resulting_path = resulting_path / Path(datetime.now().strftime(DATE_FORMAT))
                 case BaseTrainer.Mode.FIXED:
-                    if not self._path is not None:
+                    if not self._date is not None:
                         msg = "Mode fixed needs value to dir with the YYYYMMDD_HHMMSS format"
                         log.error("Mode fixed needs value to dir with the YYYYMMDD_HHMMSS format")
                         raise ValueError(msg)
                     try:
-                        datetime.strptime(self._path, DATE_FORMAT)
+                        datetime.strptime(self._date, DATE_FORMAT)
                     except ValueError as e:
-                        log.error(f"Gave mode FIXED a path with an invalid YYYYMMDD_HHMMSS format: {self._path}")
+                        log.error(f"Gave mode FIXED a path with an invalid YYYYMMDD_HHMMSS format: {self._date}")
                         raise e
-                    resulting_path = resulting_path / self._path
+                    resulting_path = resulting_path / self._date
                 case BaseTrainer.Mode.LATEST:
-                    if self._path is not None:
-                        log.warn(f"Given date {self._path} will be ignored with selected mode LATEST")
+                    if self._date is not None:
+                        log.warn(f"Given date {self._date} will be ignored with selected mode LATEST")
 
                     @staticmethod
                     def is_valid_timestamp(ts: str):

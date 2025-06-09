@@ -9,6 +9,7 @@ from debug.decorators import identify_method
 
 class TrainerStateProtocol(Protocol):
     class CurrentProtocol(Protocol):
+        iteration: int
         epoch: int
         step: int
 

@@ -1,4 +1,5 @@
 MODEL:
+  MODULE: "IAE"
   PADDING: 0.1
   ENCODER:
     N_HIDDEN_LAYERS: 2
@@ -12,45 +13,46 @@ MODEL:
 DEVICE: "cuda"
 
 TRAINER:
-    BATCH_SIZE: 1
-    LEARNING_RATE: 
-      VALUE: 1e-4
-    EPOCHS: 1000
-    ACCUM_STEPS: 1
-    VALIDATION_PERIOD: 1
-    BACKUP_PERIOD: 100
-    VALIDATION_SPLIT: 0.2
-    MULTIPROCESSING: false
+  BATCH_SIZE: 1
+  LEARNING_RATE:
+    OPTIMIZER: "adam"
+    VALUE: 1e-4
+  EPOCHS: 1000
+  ACCUM_STEPS: 1
+  VALIDATION_PERIOD: 1
+  BACKUP_PERIOD: 100
+  VALIDATION_SPLIT: 0.2
+  MULTIPROCESSING: false
 
-    POINTCLOUD_TF:
-      TRAIN:
-        CENTERZRANDOM:
-          BASE_RATIO: 0.5
-        DOWNSAMPLE:
-          N_POINTS: 4096
-        NOISE:
-          NOISE: 0.005
+  POINTCLOUD_TF:
+    TRAIN:
+      CENTERZRANDOM:
+        BASE_RATIO: 0.5
+      DOWNSAMPLE:
+        N_POINTS: 4096
+      NOISE:
+        NOISE: 0.005
 
-      VAL:
-        # CENTERZRANDOM:
-        #   BASE_RATIO: 0.5
-        DOWNSAMPLE:
-          N_POINTS: 4096
-        # NOISE:
-        #   NOISE: 0.005
+    VAL:
+      # CENTERZRANDOM:
+      #   BASE_RATIO: 0.5
+      DOWNSAMPLE:
+        N_POINTS: 4096
+      # NOISE:
+      #   NOISE: 0.005
 
-    IMPLICIT_GRID_TF:
-      TRAIN:
-        BREAKSYMMETRY:
-          STD_DEV: 0.0004
-        DOWNSAMPLE:
-          N_POINTS: 2048
+  IMPLICIT_GRID_TF:
+    TRAIN:
+      BREAKSYMMETRY:
+        STD_DEV: 0.0004
+      DOWNSAMPLE:
+        N_POINTS: 2048
 
-      VAL:
-        # BREAKSYMMETRY:
-        #   STD_DEV: 0.0004
-        DOWNSAMPLE:
-          N_POINTS: 2048
+    VAL:
+      # BREAKSYMMETRY:
+      #   STD_DEV: 0.0004
+      DOWNSAMPLE:
+        N_POINTS: 2048
 
 TESTER:
   BATCH_SIZE: 1

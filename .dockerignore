@@ -1,7 +1,3 @@
-data/
-**/data/
-**/data/**
-
-# submodules/
-# **/submodules/
-# **/submodules/**
+src/LIM/data/raw/**
+src/submodules/**
+!src/submodules/IAE

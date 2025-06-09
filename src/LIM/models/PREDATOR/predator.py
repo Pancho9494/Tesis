@@ -1,8 +1,7 @@
 from LIM.data.structures.pair import Pair
 from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
 from debug.decorators import identify_method
-from multimethod import multimethod
-from typing import Any, Tuple
+from typing import Tuple
 from LIM.models.modelI import Model
 import torch
 
@@ -27,11 +26,11 @@ class PREDATOR(Model):
             self.decoder(target, target_skip),
         )
         pair.source, pair.target = source, target
-        cat_dim = torch.argmax(torch.tensor(source.points.shape)).item()
+        cat_dim = int(torch.argmax(torch.tensor(source.points.shape)).item())
         return (
             pair,
-            _overlaps := torch.cat((source_overlap, target_overlap), dim=cat_dim),
-            _saliencies := torch.cat((source_saliency, target_saliency), dim=cat_dim),
+            torch.cat((source_overlap, target_overlap), dim=cat_dim),  # overlap_score
+            torch.cat((source_saliency, target_saliency), dim=cat_dim),  # saliency_score
         )
 
     # @identify_method

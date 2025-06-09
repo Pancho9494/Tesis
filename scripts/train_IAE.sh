@@ -1,6 +1,3 @@
-docker build -f containers/docker/Dockerfile -t lim/cuda12.4-cudnn9:latest . --no-cache
-docker run -it --rm -v ./src/LIM/data/:/home/appuser/LIM/src/LIM/data lim/cuda12.cudnn9
-
 #!/usr/bin/bash
 # SBATCH -J train_IAE
 # SBATCH -p v100

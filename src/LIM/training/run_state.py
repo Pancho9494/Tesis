@@ -6,6 +6,7 @@ from pathlib import Path
 import msgpack
 import LIM.log as log
 from LIM.training.threading import backup_executor
+from os import PathLike
 
 
 class RunState:
@@ -25,7 +26,7 @@ class RunState:
                 + f"Iter[[cyan]{self.iteration:02d}[/cyan]]"
             )
 
-    run_name: str
+    run_name: str | Path | PathLike
     train: Current
     val: Current
     tracker: aim.Run
@@ -47,7 +48,7 @@ class RunState:
     def on_backup_step(self) -> bool:
         return self.train.step % settings.TRAINER.BACKUP_PERIOD == 0
 
-    def load(self, run: str = "", suffix: str = "") -> None:
+    def load(self, run: str | Path | PathLike = "", suffix: str = "") -> None:
         """ """
         path = Path(f"{run}/run_state_{suffix}.msgpack")
 
@@ -79,5 +80,5 @@ class RunState:
                 use_bin_type=True,
             )
 
-    def save_async(self, run: str = "", suffix: str = "") -> None:
+    def save_async(self, run: str | Path | PathLike = "", suffix: str = "") -> None:
         backup_executor.submit(self.save, run, suffix)

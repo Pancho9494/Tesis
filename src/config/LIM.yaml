@@ -1,4 +1,5 @@
 MODEL:
+  MODULE: "PREDATOR"
   PADDING: 0.1
   ENCODER:
     N_HIDDEN_LAYERS: 2
@@ -12,34 +13,35 @@ MODEL:
 DEVICE: "cuda"
 
 TRAINER:
-    BATCH_SIZE: 1
-    LEARNING_RATE: 
-      VALUE: 5e-3
-      WEIGHT_DECAY: 1e-6
-      MOMENTUM: 0.98
-    EPOCHS: 40
-    ACCUM_STEPS: 1
-    VALIDATION_PERIOD: 1
-    BACKUP_PERIOD: 100
-    VALIDATION_SPLIT: 0.2
-    MULTIPROCESSING: false
+  BATCH_SIZE: 1
+  LEARNING_RATE:
+    OPTIMIZER: "sgd"
+    VALUE: 5e-3
+    WEIGHT_DECAY: 1e-6
+    MOMENTUM: 0.98
+  EPOCHS: 30
+  ACCUM_STEPS: 1
+  VALIDATION_PERIOD: 1
+  BACKUP_PERIOD: 100
+  VALIDATION_SPLIT: 0.2
+  MULTIPROCESSING: false
 
-    POINTCLOUD_TF:
-      TRAIN:
-        # CENTERZRANDOM:
-        #   BASE_RATIO: 0.5
-        # DOWNSAMPLE:
-        #   N_POINTS: 30000
-        # NOISE:
-        #   NOISE: 0.005
+  POINTCLOUD_TF:
+    TRAIN:
+      # CENTERZRANDOM:
+      #   BASE_RATIO: 0.5
+      # DOWNSAMPLE:
+      #   N_POINTS: 30000
+      # NOISE:
+      #   NOISE: 0.005
 
-      VAL:
-        # CENTERZRANDOM:
-        #   BASE_RATIO: 0.5
-        # DOWNSAMPLE:
-        #   N_POINTS: 30000
-        # NOISE:
-        #   NOISE: 0.005
+    VAL:
+      # CENTERZRANDOM:
+      #   BASE_RATIO: 0.5
+      # DOWNSAMPLE:
+      #   N_POINTS: 30000
+      # NOISE:
+      #   NOISE: 0.005
 
 TESTER:
   BATCH_SIZE: 1

@@ -1,5 +1,4 @@
-import torch
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Type
 import LIM.log as log
 from config.config import settings
 from LIM.training.trainer import BaseTrainer, handle_OOM
@@ -7,8 +6,7 @@ from LIM.metrics import L1Loss, IOU
 from LIM.data.sets import CloudDatasetsI
 from LIM.data.structures import PCloud
 import random
-import numpy as np
-import copy
+import numpy as np import copy
 from datetime import datetime
 from LIM.models.modelI import Model
 from LIM.models.IAE import IAE
@@ -21,7 +19,7 @@ class IAETrainer(BaseTrainer):
     best_average_val_iou: float
 
     def __init__(
-        self, model: torch.nn.Module, dataset: CloudDatasetsI, mode: Optional[BaseTrainer.Mode] = None
+        self, model: Type[Model], dataset: Type[CloudDatasetsI], mode: Optional[BaseTrainer.Mode] = None
     ) -> None:
         super(IAETrainer, self).__init__(model, dataset, mode)
         self.l1_loss = L1Loss(trainer_state=self.state, reduction="none")
@@ -29,7 +27,7 @@ class IAETrainer(BaseTrainer):
         self.model.to(self.device)
         self.average_val_iou, self.best_average_val_iou = 0.0, 0.0
 
-    def _load_model(self, model: Model) -> None:
+    def _load_model(self, model: Type[Model]) -> None:
         self.model = IAE(model)
 
     @handle_OOM
