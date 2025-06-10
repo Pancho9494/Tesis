@@ -17,13 +17,14 @@ class RunState:
         step: int = field(default=0)
         best_model: Dict[str, Any] = field(default_factory=dict)
         on_best_iter: bool = False
+        
 
         @property
         def log_header(self) -> str:
             return (
-                f"Epoch[[cyan]{self.epoch:02d}[/cyan]]"
-                + f"Step[[cyan]{self.step:02d}[/cyan]]"
-                + f"Iter[[cyan]{self.iteration:02d}[/cyan]]"
+                    f"Epoch[[cyan]{self.epoch:02d}/{settings.TRAINER.EPOCHS:02d}[/cyan]]"
+                    + f"Step[[cyan]{self.step:02d}[/cyan]]"
+                    + f"Iter[[cyan]{self.iteration:02d}[/cyan]]"
             )
 
     run_name: str | Path | PathLike

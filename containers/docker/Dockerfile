@@ -47,7 +47,6 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 USER appuser
-COPY --chown=appuser .aim/ /home/appuser/LIM/.aim/
 COPY --from=builder --chown=appuser /home/appuser/LIM/src/ /home/appuser/LIM/src
 COPY --from=builder --chown=appuser /home/appuser/.local /home/appuser/.local
 COPY --from=builder --chown=appuser /home/appuser/LIM/.venv .venv

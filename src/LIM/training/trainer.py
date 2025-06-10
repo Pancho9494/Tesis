@@ -57,7 +57,7 @@ class BaseTrainer(ABC):
         mode = mode if mode is not None else BaseTrainer.Mode.NEW
         BaseTrainer.device = torch.device(self._settings.DEVICE)
         self._load_model(model)
-        self.BACKUP_DIR = mode.path(to=self.model.__class__.__name__)
+        self.BACKUP_DIR = mode.date(to=self.model.__class__.__name__)
         log.info(f"Running {mode._name_} training on {self.BACKUP_DIR}")
 
         match self._settings.TRAINER.LEARNING_RATE.OPTIMIZER:
@@ -70,8 +70,8 @@ class BaseTrainer(ABC):
                 self.optgmizer = torch.optim.SGD(
                     self.model.parameters(),
                     lr=(_lr := self._settings.TRAINER.LEARNING_RATE.VALUE),
-                    weight_decay=(_wd := self.TRAINER.LEARNING_RATE.WEIGHT_DECAY),
-                    momentum=(_mm := self.TRAINER.LEARNING_RATE.MOMENTUM),
+                    weight_decay=(_wd := self._settings.TRAINER.LEARNING_RATE.WEIGHT_DECAY),
+                    momentum=(_mm := self._settings.TRAINER.LEARNING_RATE.MOMENTUM),
                 )
                 log.info(f"Chose SGD optimizer (lr={_lr}, weight_decay={_wd}, momentum={_mm}")
         self.state = RunState(run_name=f"{self.BACKUP_DIR.parent.stem}/{self.BACKUP_DIR.stem}")
@@ -154,6 +154,7 @@ class BaseTrainer(ABC):
         ...
 
     def train(self) -> None:
+        log.info(f"Training for {self._settings.TRAINER.EPOCHS} epochs")
         for self.state.train.epoch in range(self.state.train.epoch, self._settings.TRAINER.EPOCHS):
             self.state.val.epoch = self.state.train.epoch
             self.optimizer.zero_grad()

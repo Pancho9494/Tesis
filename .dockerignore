@@ -1,3 +1,4 @@
 src/LIM/data/raw/**
 src/submodules/**
 !src/submodules/IAE
+src/LIM/training/backups/**

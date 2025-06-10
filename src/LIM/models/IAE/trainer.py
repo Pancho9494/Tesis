@@ -6,7 +6,8 @@ from LIM.metrics import L1Loss, IOU
 from LIM.data.sets import CloudDatasetsI
 from LIM.data.structures import PCloud
 import random
-import numpy as np import copy
+import numpy as np 
+import copy
 from datetime import datetime
 from LIM.models.modelI import Model
 from LIM.models.IAE import IAE
@@ -32,7 +33,7 @@ class IAETrainer(BaseTrainer):
 
     @handle_OOM
     def _custom_train_step(self, sample: Tuple[PCloud, PCloud]) -> bool:
-        if settings.ENCODER.FREEZE:
+        if settings.MODEL.ENCODER.FREEZE:
             self.model.encoder.val()
         og_points = copy.copy(sample[0])
         cloud, implicit = sample

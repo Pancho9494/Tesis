@@ -17,7 +17,7 @@ class IAE(Model):
         self.GRID_RESOLUTION = settings.MODEL.ENCODER.GRID_RES
 
         self.encoder = self._fetch_encoder_from_model(model)
-        if settings.ENCODER.FREEZE:
+        if settings.MODEL.ENCODER.FREEZE:
             log.info(f"Training with {self.encoder} weights frozen")
             for p in self.encoder.parameters():
                 p.requires_grad = False
