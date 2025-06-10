@@ -180,7 +180,9 @@ class BaseTrainer(ABC):
                     self.optimizer.zero_grad()
 
                 if self.state.on_backup_step:
-                    log.info(f"Making backup on step {self.state.train.step}")
+                    log.info(
+                        f"Making backup on step {self.state.train.step}, with current state:\n{self._custom_loss_log('train')}"
+                    )
                     self.model.save_async(run=self.BACKUP_DIR, suffix="latest")
                     self.state.save_async(run=self.BACKUP_DIR, suffix="latest")
 
@@ -200,7 +202,9 @@ class BaseTrainer(ABC):
                         self.val_set.force_downsample(sample)
 
                     if self.state.val.on_best_iter:
-                        log.info(f"Saving best model on step {self.state.train.step}")
+                        log.info(
+                            f"Saving best model on step {self.state.train.step}, with current state:\n{self._custom_loss_log('val')}"
+                        )
                         self.model.save_async(run=self.BACKUP_DIR, suffix="best")
                         self.state.save_async(run=self.BACKUP_DIR, suffix="best")
                         self.state.val.on_best_iter = False
