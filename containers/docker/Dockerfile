@@ -1,5 +1,5 @@
 #syntax=docker/dockerfile:1.7-labs
-FROM bitnami/minideb:bookworm AS builder
+FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
 RUN useradd -m appuser
 
 WORKDIR /home/appuser/LIM
@@ -10,16 +10,16 @@ USER root
 RUN chown -R appuser:appuser /home/appuser && \
   apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true && \
   apt-get install --no-install-recommends -y \
-  ca-certificates=20230311 \
-  libegl1=1.6.0-1 \
-  libgl1=1.6.0-1 \
-  libgomp1=12.2.0-14+deb12u1 \
-  build-essential=12.9 \
-  libx11-6=2:1.8.4-2+deb12u2 \
-  mesa-utils=8.5.0-1 \
-  libgl1-mesa-glx=22.3.6-1+deb12u1 \
-  libglib2.0-0=2.74.6-2+deb12u6 \
-  wget=1.21.3-1+deb12u1 && \
+  ca-certificates=20240203~22.04.1\
+  libegl1=1.4.0-1\
+  libgl1=1.4.0-1\
+  libgomp1=12.3.0-1ubuntu1~22.04\
+  build-essential=12.9ubuntu3\
+  libx11-6=2:1.7.5-1ubuntu0.3\
+  mesa-utils=8.4.0-1ubuntu1\
+  libgl1-mesa-glx=23.0.4-0ubuntu1~22.04.1\
+  libglib2.0-0=2.72.4-0ubuntu2.5\
+  wget=1.21.2-2ubuntu1.1 && \
   apt-get clean && rm -rf /var/lib/apt/lists/* && \
   update-ca-certificates
 
@@ -27,22 +27,28 @@ USER appuser
 RUN bash -c "set -euo pipefail; wget -q https://astral.sh/uv/install.sh; bash install.sh; rm install.sh"
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 RUN uv sync && uv pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
+
+# Compile cpp libraries
 WORKDIR /home/appuser/LIM/src/LIM/cpp/
-RUN bash -c "set -euo pipefail; bash compile.sh"
+RUN bash -c "set -euo pipefail; bash compile.sh -j$(nproc)"
+WORKDIR /home/appuser/LIM/src/submodules/IAE/src/encoder/pointnet2
+ARG TORCH_CUDA_ARCH_LIST
+RUN TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+    CXXFLAGS="-DAT_CHECK=TORCH_CHECK" \
+    bash -c "set -euo pipefail; uv run python setup.py install"
 WORKDIR /home/appuser/LIM/
 
-FROM bitnami/minideb:bookworm AS production 
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS production
 RUN useradd -m appuser
 WORKDIR /home/appuser/LIM
 RUN apt-get update && apt-get install --no-install-recommends -y \
-  libegl1=1.6.0-1 \
-  libgl1=1.6.0-1 \
-  libgomp1=12.2.0-14+deb12u1 \
-  build-essential=12.9 \
-  libx11-6=2:1.8.4-2+deb12u2 \
-  mesa-utils=8.5.0-1 \
-  libgl1-mesa-glx=22.3.6-1+deb12u1 \
-  libglib2.0-0=2.74.6-2+deb12u6 && \
+  libegl1\
+  libgl1\
+  libgomp1\
+  libx11-6\
+  mesa-utils\
+  libgl1-mesa-glx\
+  libglib2.0-0 && \
   rm -rf /var/lib/apt/lists/**
 
 ENV PATH="/home/appuser/.local/bin:${PATH}"

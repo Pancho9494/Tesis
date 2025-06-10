@@ -4,7 +4,7 @@ from os import PathLike
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Type
 import sys
 from rich import pretty, print, traceback
 import torch
@@ -17,7 +17,7 @@ builtins.print = print
 
 def import_without_init(
     path_to_file: str | Path | PathLike, class_name: str, dependencies: list[str | Path | PathLike] | None = None
-) -> Any:
+) -> Type[Any]:
     """
     Import a class from a module without running parent package __init__.py
     and with temporary sys.path dependencies.
@@ -39,7 +39,7 @@ def import_without_init(
         dynamic_class = getattr(module, class_name)
     finally:
         sys.path = og_sys_path
-    return dynamic_class()
+    return dynamic_class
 
 
 def main():
@@ -48,14 +48,14 @@ def main():
         path_to_file=(IAE_PATH := Path("src/submodules/IAE/")) / "src/encoder/dgcnn_semseg.py",
         class_name="DGCNN_semseg",
         dependencies=[IAE_PATH],
-    )
+    )()
     decoder = import_without_init(
         path_to_file=IAE_PATH / "src/dfnet/models/decoder.py",
         class_name="LocalDecoder",
         dependencies=[IAE_PATH],
-    )
+    )()
     model = import_without_init(
-        path_to_file=IAE_PATH / "src/dfnet/config.py",
+        path_to_file=IAE_PATH / "src/dfnet/models/__init__.py",
         class_name="ConvolutionalDFNetwork",
     )(
         decoder,
