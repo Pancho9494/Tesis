@@ -56,3 +56,4 @@ USER appuser
 COPY --from=builder --chown=appuser /home/appuser/LIM/src/ /home/appuser/LIM/src
 COPY --from=builder --chown=appuser /home/appuser/.local /home/appuser/.local
 COPY --from=builder --chown=appuser /home/appuser/LIM/.venv .venv
+RUN uv aim up
