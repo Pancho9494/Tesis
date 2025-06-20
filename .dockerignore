@@ -1,4 +1,5 @@
 src/LIM/data/raw/**
 src/submodules/**
 !src/submodules/IAE
+!src/submodules/OverlapPredator
 src/LIM/training/backups/**

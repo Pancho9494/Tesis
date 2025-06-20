@@ -1,4 +1,3 @@
-import torch
 import torchvision
 from pathlib import Path
 from typing import List, Optional, Callable, Dict

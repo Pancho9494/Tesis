@@ -6,7 +6,7 @@ from LIM.metrics import L1Loss, IOU
 from LIM.data.sets import CloudDatasetsI
 from LIM.data.structures import PCloud
 import random
-import numpy as np 
+import numpy as np
 import copy
 from datetime import datetime
 from LIM.models.modelI import Model
