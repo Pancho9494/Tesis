@@ -26,12 +26,12 @@ FROM pytorch/pytorch:1.7.1-cuda11.0-cudnn8-runtime AS production
 RUN useradd -m appuser
 WORKDIR /home/appuser/OverlapPredator
 RUN chown -R appuser:appuser /home/appuser && \
-    apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true && \
-    apt-get install --no-install-recommends -y \
-    libegl1=1.0.0-2ubuntu2.3 \
-    libgl1=1.0.0-2ubuntu2.3 \
-    git=1:2.17.1-1ubuntu0.18
-    #apt-get clean && rm -rf /var/lib/apt/lists/*
+  apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true && \
+  apt-get install --no-install-recommends -y \
+  libegl1=1.0.0-2ubuntu2.3 \
+  libgl1=1.0.0-2ubuntu2.3 \
+  git=1:2.17.1-1ubuntu0.18
+#apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 USER appuser
