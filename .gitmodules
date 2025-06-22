@@ -1,14 +1,6 @@
-[submodule "src/submodules/OverlapPredator"]
-	path = src/submodules/OverlapPredator
-	url = https://github.com/prs-eth/OverlapPredator
-	ignore = dirty
 [submodule "src/submodules/Coarse-to-fine-correspondences"]
 	path = src/submodules/Coarse-to-fine-correspondences
 	url = https://github.com/haoyu94/Coarse-to-fine-correspondences.git
-[submodule "src/submodules/IAE"]
-	path = src/submodules/IAE
-	url = https://github.com/SimingYan/IAE.git
-	ignore = dirty
 [submodule "src/submodules/GeoTransformer"]
 	path = src/submodules/GeoTransformer
 	url = https://github.com/qinzheng93/GeoTransformer.git
