@@ -30,15 +30,8 @@ RUN chown -R appuser:appuser /home/appuser && \
     apt-get install --no-install-recommends -y \
     libegl1=1.0.0-2ubuntu2.3 \
     libgl1=1.0.0-2ubuntu2.3 \
-    git=1:2.17.1-1ubuntu0.18 
-    # apt-get install --no-install-recommends -y \
-# RUN chown -R appuser:appuser /home/appuser && \
-#   apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true && \
-#   apt-get install --no-install-recommends -y \
-#   libegl1=1.0.0-2ubuntu2.3\
-#   libgl1=1.0.0-2ubuntu2.3 \
-#   git=1:2.17.1-1ubuntu0.18 \
-#   apt-get clean && rm -rf /var/lib/apt/lists/*
+    git=1:2.17.1-1ubuntu0.18
+    #apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 USER appuser
@@ -46,3 +39,5 @@ COPY --from=builder --chown=appuser /home/appuser/OverlapPredator/ /home/appuser
 COPY --from=builder --chown=appuser /home/appuser/.local /home/appuser/.local
 COPY --from=builder --chown=appuser /home/appuser/OverlapPredator/.venv /home/appuser/OverlapPredator/.venv
 # RUN uv aim up
+# ENTRYPOINT ["uv", "run", "python", "main.py", "configs/train/indoor.yaml"]
+ENTRYPOINT ["bash", "run.sh"]

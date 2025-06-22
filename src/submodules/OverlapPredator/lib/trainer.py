@@ -107,6 +107,7 @@ class Trainer(object):
 
     def stats_dict(self):
         stats = dict()
+        stats["c_loss"] = 0.0
         stats["circle_loss"] = 0.0
         stats["recall"] = 0.0  # feature match recall, divided by number of ground truth pairs
         stats["saliency_loss"] = 0.0
@@ -247,7 +248,7 @@ class Trainer(object):
 
                 ################################
                 # update to stats_meter
-                del stats["c_loss"]
+                # del stats["c_loss"]
                 for key, value in stats.items():
                     stats_meter[key].update(value)
                     # if key == "recall":
