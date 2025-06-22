@@ -235,42 +235,6 @@ class Trainer(object):
                 # with torch.autograd.detect_anomaly():
                 stats = self.inference_one_batch(inputs, phase)
 
-                self.tracker.track(
-                    stats["c_loss"],
-                    name="MultiLoss",
-                    step=c_iter,
-                    epoch=epoch,
-                    context={"subset": phase, "y0to1": False, "track": "average"},
-                )
-                self.tracker.track(
-                    stats["circle_loss"] * self.w_circle_loss,
-                    name="CircleLoss",
-                    step=c_iter,
-                    epoch=epoch,
-                    context={"subset": phase, "y0to1": False, "track": "average"},
-                )
-                self.tracker.track(
-                    stats["overlap_loss"] * self.w_overlap_loss,
-                    name="OverlapLoss",
-                    step=c_iter,
-                    epoch=epoch,
-                    context={"subset": phase, "y0to1": False, "track": "average"},
-                )
-                self.tracker.track(
-                    stats["saliency_loss"] * self.w_saliency_loss,
-                    name="MatchabilityLoss",
-                    step=c_iter,
-                    epoch=epoch,
-                    context={"subset": phase, "y0to1": False, "track": "average"},
-                )
-                self.tracker.track(
-                    stats_meter["recall"].avg,
-                    name="FeatureMatchRecall",
-                    step=c_iter,
-                    epoch=epoch,
-                    context={"subset": phase, "y0to1": True, "track": "average"},
-                )
-
                 ###################################################
                 # run optimisation
                 if (c_iter + 1) % self.iter_size == 0 and phase == "train":
@@ -293,6 +257,77 @@ class Trainer(object):
                     stats_meter["circle_loss"].val * self.w_circle_loss
                     + stats_meter["overlap_loss"].val * self.w_overlap_loss
                     + stats_meter["saliency_loss"].val * self.w_saliency_loss
+                )
+
+                self.tracker.track(
+                    stats_meter["c_loss"].avg,
+                    name="MultiLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "average"},
+                )
+                self.tracker.track(
+                    stats_meter["c_loss"].val,
+                    name="MultiLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "current"},
+                )
+                self.tracker.track(
+                    stats_meter["circle_loss"].avg * self.w_circle_loss,
+                    name="CircleLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "average"},
+                )
+                self.tracker.track(
+                    stats_meter["circle_loss"].val * self.w_circle_loss,
+                    name="CircleLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "current"},
+                )
+                self.tracker.track(
+                    stats_meter["overlap_loss"].avg * self.w_overlap_loss,
+                    name="OverlapLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "average"},
+                )
+                self.tracker.track(
+                    stats_meter["overlap_loss"].val * self.w_overlap_loss,
+                    name="OverlapLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "current"},
+                )
+                self.tracker.track(
+                    stats_meter["saliency_loss"].avg * self.w_saliency_loss,
+                    name="MatchabilityLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "average"},
+                )
+                self.tracker.track(
+                    stats_meter["saliency_loss"].val * self.w_saliency_loss,
+                    name="MatchabilityLoss",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": False, "track": "current"},
+                )
+                self.tracker.track(
+                    stats_meter["recall"].avg,
+                    name="FeatureMatchRecall",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": True, "track": "average"},
+                )
+                self.tracker.track(
+                    stats_meter["recall"].val,
+                    name="FeatureMatchRecall",
+                    step=c_iter,
+                    epoch=epoch,
+                    context={"subset": phase, "y0to1": True, "track": "current"},
                 )
                 p = ""
                 p += "FMR "
