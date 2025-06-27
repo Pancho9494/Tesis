@@ -3,6 +3,7 @@
 #SBATCH -p v100
 #SBATCH -n 2
 #SBATCH -c 2
+#SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:1
 #SBATCH --mem-per-cpu 2768
 #SBATCH -o train_IAE_%j.err.out
