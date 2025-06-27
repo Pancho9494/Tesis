@@ -84,8 +84,7 @@ def get_data_fields(mode, cfg):
             multi_files=cfg['data']['multi_files'],
         )
 
-    # if mode in ('val', 'test'):
-    if mode in ('train', 'val', 'test'):
+    if mode in ('val', 'test'):
         points_iou_file = cfg['data']['points_iou_file']
         if points_iou_file is not None:
             fields['points_iou'] = data.PointsField(

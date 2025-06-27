@@ -27,9 +27,6 @@ class IndexField(Field):
             files: files
         """
         return True
-    
-    def __repr__(self):
-        return f"{self.__class__.__name__}"
 
 
 class PointsField(Field):
@@ -50,9 +47,6 @@ class PointsField(Field):
         self.transform = transform
         self.unpackbits = unpackbits
         self.multi_files = multi_files
-        
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.file_name})"
 
     def load(self, model_path, idx, category, mode):
         """Loads the data point.
@@ -69,19 +63,15 @@ class PointsField(Field):
         if self.multi_files is None:
             file_path = os.path.join(model_path, self.file_name)
         else:
-            # num = np.random.randint(self.multi_files)
-            sub = random.choice(list(os.listdir(os.path.join(model_path, "pointcloud"))))
-            num = int(os.path.splitext(sub)[0][-2:])
+            num = np.random.randint(self.multi_files)
             file_path = os.path.join(model_path, self.file_name, "%s_%02d.npz" % (self.file_name, num))
 
         try:
             points_dict = np.load(file_path)
-        except Exception as e:
-            # import ipdb
-            print(e)
-            return
+        except:
+            import ipdb
 
-            # ipdb.set_trace()
+            ipdb.set_trace()
         points = points_dict["points"]
         # Break symmetry if given in float16:
         if points.dtype == np.float16:
@@ -98,7 +88,6 @@ class PointsField(Field):
         data = {
             None: points,
             "df": distance_value,
-            "file_path": file_path,
         }
 
         if self.transform is not None:
@@ -123,9 +112,6 @@ class PointCloudField(Field):
         self.file_name = file_name
         self.transform = transform
         self.multi_files = multi_files
-    
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.file_name})"
 
     def load(self, model_path, idx, category, mode):
         """Loads the data point.
@@ -186,9 +172,6 @@ class PartialPointCloudField(Field):
         self.multi_files = multi_files
         self.part_ratio = part_ratio
         self.partial_type = partial_type
-        
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.file_name})"
 
     def load(self, model_path, idx, category, mode):
         """Loads the data point.
@@ -205,24 +188,18 @@ class PartialPointCloudField(Field):
         if self.multi_files is None:
             file_path = os.path.join(model_path, self.file_name)
         else:
-            sub = random.choice(list(os.listdir(os.path.join(model_path, "pointcloud"))))
-            num = int(os.path.splitext(sub)[0][-2:])
+            num = np.random.randint(self.multi_files)
             file_path = os.path.join(model_path, self.file_name, "%s_%02d.npz" % (self.file_name, num))
 
         try:
             pointcloud_dict = np.load(file_path)
-        except Exception as e:
+        except:
             print("Wrong file:", file_path)
-            print(e)
 
         try:
             points = pointcloud_dict["points"].astype(np.float32)
         except:
             points = pointcloud_dict["arr_0"].astype(np.float32)
-
-        # import open3d as o3d
-        # original = o3d.geometry.PointCloud()
-        # original.points = o3d.utility.Vector3dVector(points)
 
         if "centery" in self.partial_type:
             if self.partial_type == "centery_random":
@@ -294,7 +271,6 @@ class PartialPointCloudField(Field):
 
             data = {
                 None: remain_points,
-                "file_path": file_path,
             }
 
         elif self.partial_type == "randomy_random":
@@ -330,9 +306,6 @@ class PartialPointCloudField(Field):
         if self.transform is not None:
             data = self.transform(data)
 
-        # temp = o3d.geometry.PointCloud()
-        # temp.points = o3d.utility.Vector3dVector(data[None])
-        # o3d.visualization.draw_geometries([original, o3d.geometry.TriangleMesh.create_coordinate_frame(), temp])
         return data
 
     def check_complete(self, files):

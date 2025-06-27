@@ -2,7 +2,7 @@ method: dfnet
 data:
   input_type: partial_pointcloud
   classes: ['rooms_01']
-  path: data/raw/scannet
+  path: data/scannet
   pointcloud_n: 4096
   pointcloud_noise: 0.005
   points_subsample: 2048
@@ -33,7 +33,7 @@ model:
   c_dim: 256
 training:
   out_dir: out/scannet/dgcnn_semseg
-  batch_size: 1
+  batch_size: 16
   model_selection_metric: iou
   model_selection_mode: maximize
   print_every: 100
@@ -41,8 +41,8 @@ training:
   validate_every: 10000
   checkpoint_every: 2000
   backup_every: 10000
-  n_workers: 1
-  n_workers_val: 1
+  n_workers: 0
+  n_workers_val: 0
 test:
   threshold: 0.01
   eval_mesh: true

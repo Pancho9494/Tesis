@@ -3,16 +3,16 @@
 
 import torch, torch.nn as nn, torch.nn.functional as F
 
-
 def knn(x, k):
     inner = -2 * torch.matmul(x.transpose(2, 1).contiguous(), x)
-    xx = torch.sum(x**2, dim=1, keepdim=True)
+    xx = torch.sum(x ** 2, dim=1, keepdim=True)
     pairwise_distance = -xx - inner - xx.transpose(2, 1).contiguous()
     idx = pairwise_distance.topk(k=k, dim=-1)[1]
     return idx
 
 
 def get_graph_feature(x, k=20, idx=None, extra_dim=False):
+
     batch_size, num_dims, num_points = x.size()
     x = x.view(batch_size, -1, num_points)
     if idx is None:
@@ -21,21 +21,22 @@ def get_graph_feature(x, k=20, idx=None, extra_dim=False):
         else:
             idx = knn(x[:, 6:], k=k)  # idx = knn(x[:, :3], k=k)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1) * num_points
     idx += idx_base
     idx = idx.view(-1)
 
     x = x.transpose(2, 1).contiguous()
-    feature = x.view(batch_size * num_points, -1)[idx, :]
+    feature = x.view(batch_size*num_points, -1)[idx, :]
     feature = feature.view(batch_size, num_points, k, num_dims)
     x = x.view(batch_size, num_points, 1, num_dims).repeat(1, 1, k, 1)
-    feature = torch.cat((feature - x, x), dim=3).permute(0, 3, 1, 2).contiguous()
+    feature = torch.cat((feature-x, x), dim=3).permute(0, 3, 1, 2).contiguous()
 
     return feature  # (batch_size, 2 * num_dims, num_points, k)
 
 
 class get_model(nn.Module):
+
     def __init__(self, args, num_channel=3, num_class=40, **kwargs):
         super(get_model, self).__init__()
         self.args = args
@@ -44,38 +45,28 @@ class get_model(nn.Module):
         self.bn3 = nn.BatchNorm2d(128)
         self.bn4 = nn.BatchNorm2d(256)
         self.bn5 = nn.BatchNorm1d(args.emb_dims)
+
+        self.conv1 = nn.Sequential(nn.Conv2d(num_channel*2, 64, kernel_size=1, bias=False),
+                                   self.bn1,
+                                   nn.LeakyReLU(negative_slope=0.2))
+        self.conv2 = nn.Sequential(nn.Conv2d(64*2, 64, kernel_size=1, bias=False),
+                                   self.bn2,
+                                   nn.LeakyReLU(negative_slope=0.2))
+        self.conv3 = nn.Sequential(nn.Conv2d(64*2, 128, kernel_size=1, bias=False),
+                                   self.bn3,
+                                   nn.LeakyReLU(negative_slope=0.2))
+        self.conv4 = nn.Sequential(nn.Conv2d(128*2, 256, kernel_size=1, bias=False),
+                                   self.bn4,
+                                   nn.LeakyReLU(negative_slope=0.2))
+        self.conv5 = nn.Sequential(nn.Conv1d(512, args.emb_dims, kernel_size=1, bias=False),
+                                   self.bn5,
+                                   nn.LeakyReLU(negative_slope=0.2))
+
+        self.linear1 = nn.Linear(args.emb_dims*2, 512, bias=False)
         self.bn6 = nn.BatchNorm1d(512)
-        self.bn7 = nn.BatchNorm1d(256)
-
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(num_channel * 2, 64, kernel_size=1, bias=False),
-            self.bn1,
-            nn.LeakyReLU(negative_slope=0.2),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(64 * 2, 64, kernel_size=1, bias=False),
-            self.bn2,
-            nn.LeakyReLU(negative_slope=0.2),
-        )
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(64 * 2, 128, kernel_size=1, bias=False),
-            self.bn3,
-            nn.LeakyReLU(negative_slope=0.2),
-        )
-        self.conv4 = nn.Sequential(
-            nn.Conv2d(128 * 2, 256, kernel_size=1, bias=False),
-            self.bn4,
-            nn.LeakyReLU(negative_slope=0.2),
-        )
-        self.conv5 = nn.Sequential(
-            nn.Conv1d(512, args.emb_dims, kernel_size=1, bias=False),
-            self.bn5,
-            nn.LeakyReLU(negative_slope=0.2),
-        )
-
-        self.linear1 = nn.Linear(args.emb_dims * 2, 512, bias=False)
         self.dp1 = nn.Dropout(p=args.dropout)
         self.linear2 = nn.Linear(512, 256)
+        self.bn7 = nn.BatchNorm1d(256)
         self.dp2 = nn.Dropout(p=args.dropout)
         self.linear3 = nn.Linear(256, num_class)
 
@@ -129,7 +120,7 @@ class get_loss(torch.nn.Module):
             log_prb = F.log_softmax(pred, dim=1)
             loss = -(one_hot * log_prb).sum(dim=1).mean()  # ~ F.nll_loss(log_prb, gold)
         else:
-            loss = F.cross_entropy(pred, gold, reduction="mean")
+            loss = F.cross_entropy(pred, gold, reduction='mean')
 
         return loss
 

@@ -4,8 +4,6 @@ from torch.utils import data
 import numpy as np
 import yaml
 from src.common import rotate_pointcloud, translate_pointcloud, single_translate_pointcloud
-from tqdm import tqdm
-import matplotlib as mpl
 
 logger = logging.getLogger(__name__)
 
@@ -92,17 +90,7 @@ class Shapes3dDataset(data.Dataset):
                 if "" in models_c:
                     models_c.remove("")
 
-                for m in tqdm(models_c, f"Loading {split} models from {subpath}"):
-                    if not os.path.isdir(os.path.join(subpath, m)):
-                        continue
-                    try:
-                        pointcloud_not_empty = len(os.listdir(os.path.join(subpath, m, "pointcloud"))) > 0
-                        points_iou_not_empty = len(os.listdir(os.path.join(subpath, m, "points_iou"))) > 0
-                        if pointcloud_not_empty and points_iou_not_empty:
-                            self.models += [{"category": c, "model": m}]
-                    except Exception:
-                        continue
-        print("Loaded models: ", len(self.models))
+                self.models += [{"category": c, "model": m} for m in models_c]
 
     def __len__(self):
         """Returns the length of the dataset."""
@@ -124,17 +112,18 @@ class Shapes3dDataset(data.Dataset):
 
         for field_name, field in self.fields.items():
             field_data = field.load(model_path, idx, info, self.split)
+
             if isinstance(field_data, dict):
                 for k, v in field_data.items():
                     if k is None:
                         data[field_name] = v
-                    else:
                         data["%s.%s" % (field_name, k)] = v
             else:
                 data[field_name] = field_data
 
         if self.transform is not None:
             data = self.transforms(data, transform_type=self.transform)
+
         return data
 
     def transforms(self, data, transform_type=None):
@@ -194,7 +183,8 @@ class Shapes3dDataset(data.Dataset):
             model (str): modelname
         """
         model_path = os.path.join(self.dataset_folder, category, model)
-        files = os.listdir(model_path)
+        files = os.listd
+        ir(model_path)
         for field_name, field in self.fields.items():
             if not field.check_complete(files):
                 logger.warn('Field "%s" is incomplete: %s' % (field_name, model_path))
@@ -211,10 +201,6 @@ def collate_remove_none(batch):
         batch: batch
     """
     batch = list(filter(lambda x: x is not None, batch))
-
-    # for sample in batch:
-    #     if "points" not in sample:
-    #         print(sample)
     return data.dataloader.default_collate(batch)
 
 

@@ -1,10 +1,10 @@
 #!/usr/bin/bash
 #SBATCH -J train_PREDATOR_recreation
 #SBATCH -p v100
-#SBATCH -n 4
-#SBATCH -c 4
+#SBATCH -n 2
+#SBATCH -c 2
 #SBATCH --gres=gpu:1
-#SBATCH --mem-per-cpu 12000
+#SBATCH --mem-per-cpu 2768
 #SBATCH -o train_IAE_%j.err.out
 #SBATCH -e train_IAE_%j.err.out
 #SBATCH --mail-user=fmolinaleiv@gmail.com

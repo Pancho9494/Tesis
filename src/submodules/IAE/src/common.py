@@ -30,24 +30,23 @@ def compute_iou(occ1, occ2):
         occ1 (tensor): first set of occupancy values
         occ2 (tensor): second set of occupancy values
     '''
-    occ_true = np.asarray(occ1)
-    occ_pred = np.asarray(occ2)
-
+    occ1 = np.asarray(occ1)
+    occ2 = np.asarray(occ2)
 
     # Put all data in second dimension
     # Also works for 1-dimensional data
-    if occ_true.ndim >= 2:
-        occ_true = occ_true.reshape(occ_true.shape[0], -1)
-    if occ_pred.ndim >= 2:
-        occ_pred = occ_pred.reshape(occ_pred.shape[0], -1)
+    if occ1.ndim >= 2:
+        occ1 = occ1.reshape(occ1.shape[0], -1)
+    if occ2.ndim >= 2:
+        occ2 = occ2.reshape(occ2.shape[0], -1)
 
     # Convert to boolean values
-    occ_true = (occ_true >= 0.5)
-    occ_pred = (occ_pred >= 0.5)
+    occ1 = (occ1 >= 0.5)
+    occ2 = (occ2 >= 0.5)
 
     # Compute IOU
-    area_union = (occ_true | occ_pred).astype(np.float32).sum(axis=-1)
-    area_intersect = (occ_true & occ_pred).astype(np.float32).sum(axis=-1)
+    area_union = (occ1 | occ2).astype(np.float32).sum(axis=-1)
+    area_intersect = (occ1 & occ2).astype(np.float32).sum(axis=-1)
     iou = (area_intersect / area_union)
     
     if area_union == 0:
