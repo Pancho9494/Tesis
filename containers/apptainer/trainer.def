@@ -1,5 +1,5 @@
 Bootstrap: docker-daemon
-From: lim/cuda12.4-cudnn9:latest
+From: lim/cuda12.4-cudnn9:leftraru
 
 %labels
     Author Francisco Molina
@@ -15,12 +15,12 @@ From: lim/cuda12.4-cudnn9:latest
 
 %help
     Build:
-      apptainer build iae.sif iae.def
+      apptainer build trainer.sif trainer.def
 
     Run interactively:
       apptainer shell --nv \\
         --bind /tmp/.X11-unix:/tmp/.X11-unix \\
-        iae.sif
+        trainer.sif
 
     Inside:
       cd /dockerx/LIM/src

@@ -4,7 +4,7 @@ RUN useradd -m appuser
 
 WORKDIR /home/appuser/LIM
 COPY src/ /home/appuser/LIM/src/
-COPY src/submodules/IAE /home/appuser/LIM/src/submodules/IAE
+# COPY src/submodules/IAE /home/appuser/LIM/src/submodules/IAE
 COPY pyproject.toml /home/appuser/LIM/pyproject.toml
 USER root
 RUN chown -R appuser:appuser /home/appuser && \
@@ -31,11 +31,11 @@ RUN uv sync && uv pip install torch-scatter -f https://data.pyg.org/whl/torch-2.
 # Compile cpp libraries
 WORKDIR /home/appuser/LIM/src/LIM/cpp/
 RUN bash -c "set -euo pipefail; bash compile.sh -j$(nproc)"
-WORKDIR /home/appuser/LIM/src/submodules/IAE/src/encoder/pointnet2
-ARG TORCH_CUDA_ARCH_LIST
-RUN TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
-    CXXFLAGS="-DAT_CHECK=TORCH_CHECK" \
-    bash -c "set -euo pipefail; uv run python setup.py install"
+# WORKDIR /home/appuser/LIM/src/submodules/IAE/src/encoder/pointnet2
+# ARG TORCH_CUDA_ARCH_LIST
+# RUN TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+#     CXXFLAGS="-DAT_CHECK=TORCH_CHECK" \
+#     bash -c "set -euo pipefail; uv run python setup.py install"
 WORKDIR /home/appuser/LIM/
 
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS production
