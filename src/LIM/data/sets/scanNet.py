@@ -20,7 +20,7 @@ executor = ThreadPoolExecutor()
 def check_file(file: Path) -> bool:
     try:
         np.load(str(file))
-    except (zipfile.BadZipFile, EOFError, ValueError):
+    except (zipfile.BadZipFile, EOFError, ValueError, FileNotFoundError):
         return True
     return False
 

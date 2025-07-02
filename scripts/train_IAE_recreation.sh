@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 #SBATCH -J train_IAE_recreation
 #SBATCH -p v100
 #SBATCH -n 2
@@ -11,7 +11,7 @@
 #SBATCH --mail-user=fmolinaleiv@gmail.com
 #SBATCH --mail-type=ALL
 
-ml apptainer/1.3.6-zen4-i
+#ml apptainer/1.3.6-zen4-i
 
 echo "Launching train_IAE_recreation"
 export CURRENT_USER=$(whoami)
