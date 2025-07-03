@@ -5,8 +5,8 @@
 #SBATCH -c 4
 #SBATCH --gres=gpu:1
 #SBATCH --mem-per-cpu 12000
-#SBATCH -o train_IAE_%j.err.out
-#SBATCH -e train_IAE_%j.err.out
+#SBATCH -o train_PREDATOR_original_%j.err.out
+#SBATCH -e train_PREDATOR_original_%j.err.out
 #SBATCH --mail-user=fmolinaleiv@gmail.com
 #SBATCH --mail-type=ALL
 
