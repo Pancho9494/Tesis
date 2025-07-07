@@ -3,7 +3,6 @@ from typing import Optional
 from LIM.models.layers import KNNGraph, MaxPool, Conv2D, InstanceNorm2D
 from LIM.models.layers.leakyrelu import LeakyReLU
 from LIM.data.structures.pcloud import PCloud
-from debug.decorators import identify_method
 
 
 class EdgeConv(torch.nn.Module):
@@ -25,7 +24,6 @@ class EdgeConv(torch.nn.Module):
     def __repr__(self) -> str:
         return f"EdgeConv(in_dim: {self.in_dim}, out_dim: {self.out_dim})"
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         cloud = self.layers(cloud)
         return cloud

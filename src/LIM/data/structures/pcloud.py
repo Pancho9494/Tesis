@@ -1,14 +1,15 @@
+from __future__ import annotations
 import numpy as np
 import open3d as o3d
 from pathlib import Path
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple
 import torch
 import matplotlib as mpl
 from enum import Enum
 from config.config import settings
 import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
-from debug.decorators import identify_method
+import frnn
 
 
 class Shape:
@@ -43,13 +44,13 @@ class PCloud:
     o3ddevice: str
     pcd: o3d.t.geometry.PointCloud
     _features: torch.Tensor
-    _sub: Optional["PCloud"] = None
-    _super: Optional["PCloud"] = None
+    _sub: PCloud | None = None
+    _super: PCloud | None = None
 
-    neighbors: Optional[torch.Tensor] = None
-    pools: Optional[torch.Tensor] = None
-    upsamples: Optional[torch.Tensor] = None
-    path: Optional[Path] = None
+    neighbors: torch.Tensor | None = None
+    pools: torch.Tensor | None = None
+    upsamples: torch.Tensor | None = None
+    path: torch.Tensor | None = None
 
     def __init__(self) -> None:
         self.device = "cpu" if settings is None else settings.DEVICE
@@ -209,7 +210,7 @@ class PCloud:
         self.features = self.features.reshape((-1, 1))
 
     def detach_from_chain(self) -> "PCloud":
-        """
+        """p
         Frees the gradients from all pointss within the [_sub ... self ... _super] chain
         """
         current = self._super
@@ -224,7 +225,60 @@ class PCloud:
 
         return self
 
-    @identify_method
+        # def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> None:
+        #     current = self.last
+
+        #     points = current.points.cpu().detach().numpy()
+        #     length = torch.tensor([len(points)])
+        #     current.neighbors = cpp_neighbors.batch_query(  # conv_i
+        #         queries=points,
+        #         supports=points,
+        #         q_batches=length,
+        #         s_batches=length,
+        #     )
+        #     current.neighbors = torch.from_numpy(current.neighbors[:, :40].astype(np.int64)).to(self.device)
+
+        #     if sampleDL is not None:
+        #         subsampled, subsampled_len = cpp_subsampling.subsample_batch(  # pool_p, pool_b
+        #             points=points,
+        #             batches=length.to(dtype=torch.int32),
+        #             sampleDl=sampleDL,
+        #             max_p=0,
+        #             verbose=0,
+        #         )
+        #         subsampled, subsampled_len = (
+        #             torch.from_numpy(subsampled),
+        #             torch.from_numpy(subsampled_len),
+        #         )
+
+        #         current.pools = cpp_neighbors.batch_query(  # pool_i
+        #             queries=subsampled,
+        #             supports=points,
+        #             q_batches=subsampled_len,
+        #             s_batches=length,
+        #             radius=radius,
+        #         )
+        #         current.pools = torch.from_numpy(current.pools.astype(np.int64)).to(self.device)
+
+        #         current.upsamples = cpp_neighbors.batch_query(  # up_i
+        #             queries=points,
+        #             supports=subsampled,
+        #             q_batches=length,
+        #             s_batches=subsampled_len,
+        #             radius=2 * radius,
+        #         )
+        #         current.upsamples = torch.from_numpy(current.upsamples.astype(np.int64)).to(self.device)
+        #         current._super = PCloud.from_tensor(subsampled)
+        #         current._super.path = current.path
+        #     else:
+        #         current.pools = torch.zeros((0, 1), dtype=torch.int64, device=self.device)
+        #         current.upsamples = torch.zeros((0, 1), dtype=torch.int64, device=self.device)
+        #         current._super = PCloud.from_tensor(current.points)
+        #         current._super.path = current.path
+
+        #     current._super._sub = self
+        #     current._super.features = current.features.detach().clone().to(current.device)
+
     def compute_neighbors(self, radius: float, sampleDL: Optional[float]) -> None:
         current = self.last
 
@@ -278,6 +332,71 @@ class PCloud:
 
         current._super._sub = self
         current._super.features = current.features.detach().clone().to(current.device)
+
+
+def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> None:
+    current = self.last
+
+    points = current.points.unsqueeze(0)
+    lengths = torch.tensor([len(points)], device=self.device).unsqueeze(0)
+
+    _, indices, _, grid = frnn.frnn_grid_points(
+        points1=points,
+        points2=points,
+        lengths1=lengths,
+        lengths2=lengths,
+        K=40,
+        r=radius,
+        return_nn=False,
+    )
+    current.neighbors = indices[0].to(torch.int64)
+
+    if sampleDL is not None:
+        subsampled, subsampled_len = cpp_subsampling.subsample_batch(  # pool_p, pool_b
+            points=points,
+            batches=lengths.to(dtype=torch.int32).cpu().detach(),
+            sampleDl=sampleDL,
+            max_p=0,
+            verbose=0,
+        )
+        subsampled, subsampled_len = (
+            torch.from_numpy(subsampled).to(self.device),
+            torch.from_numpy(subsampled_len).to(self.device),
+        )
+
+        _, pool_indices, _, _ = frnn.frnn_grid_points(
+            points1=(unsqueezed_subsamples := subsampled.unsqueeze(0)),
+            points2=points,
+            lengths1=(unsqueezed_subsamples_lens := subsampled_len),
+            lengths2=lengths,
+            K=-1,
+            r=radius,
+            return_nn=False,
+            grid=grid,  # Use cached grid
+        )
+        current.pools = pool_indices[0].to(torch.int64)
+
+        _, up_indices, _, _ = frnn.frnn_grid_points(
+            points1=points,
+            points2=unsqueezed_subsamples,
+            lengths1=lengths,
+            lenghts2=unsqueezed_subsamples_lens,
+            K=-1,
+            r=2 * radius,
+            return_nn=False,
+        )
+        current.upsamples = up_indices[0].to(torch.int64)
+
+        current._super = PCloud.from_tensor(subsampled)
+        current._super.path = current.path
+    else:
+        current.pools = torch.zeros((0, 1), dtype=torch.int64, device=self.device)
+        current.upsamples = torch.zeros((0, 1), dtype=torch.int64, device=self.device)
+        current._super = PCloud.from_tensor(current.points)
+        current._super.path = current.path
+
+    current._super._sub = self
+    current._super.features = current.features.detach().clone().to(current.device)
 
 
 def collate_cloud(batch: List["PCloud"]) -> "PCloud":

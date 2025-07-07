@@ -4,7 +4,6 @@ import numpy as np
 from typing import Protocol, Tuple, Optional
 from LIM.data.structures.pair import Pair
 from LIM.metrics import Loss
-from debug.decorators import identify_method
 
 
 class TrainerStateProtocol(Protocol):
@@ -78,7 +77,6 @@ class OverlapLoss(Loss):
     def __repr__(self):
         return f"OverlapLoss(weight={self.weight})"
 
-    @identify_method
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device)
@@ -123,7 +121,6 @@ class MatchabilityLoss(Loss):
     def __repr__(self):
         return f"MatchabilityLoss(weight={self.weight})"
 
-    @identify_method
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device, requires_grad=True)
@@ -207,7 +204,6 @@ class CircleLoss(Loss):
     def __repr__(self):
         return f"CircleLoss(weight={self.weight})"
 
-    @identify_method
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
             return torch.tensor([0.0], device=self.device, requires_grad=True)
@@ -301,7 +297,6 @@ class FeatureMatchRecall(Loss):
     def __repr__(self) -> str:
         return "FeatureMatchRecal()"
 
-    @identify_method
     def __call__(self, sample: Pair) -> torch.Tensor:
         global coords_dist, feats_dist
         pos_mask = coords_dist < self.POS_RADIUS

@@ -1,6 +1,5 @@
 from datetime import datetime
-from typing import Optional, Type
-
+from typing import Type
 import torch
 
 import config.config as config
@@ -21,7 +20,6 @@ class PredatorTrainer(BaseTrainer):
         super(PredatorTrainer, self).__init__(model, dataset, mode)
         assert config.settings is not None
         self._settings = config.settings
-        self.model.to(self.device)
         self.optimizer = torch.optim.SGD(
             self.model.parameters(),
             lr=self._settings.TRAINER.LEARNING_RATE.VALUE,
@@ -40,6 +38,7 @@ class PredatorTrainer(BaseTrainer):
 
     def _load_model(self, model: Type[Model]) -> None:
         self.model = model()
+        self.model.to(self.device)
 
     @handle_OOM
     def _custom_train_step(self, sample: Pair) -> bool:

@@ -1,6 +1,6 @@
 import argparse
 import builtins
-
+import atexit
 import torch
 from rich import pretty, print, traceback
 
@@ -16,24 +16,27 @@ def train_predator(mode: "BaseTrainer.Mode", pre_trained: bool = False) -> None:
     from LIM.data.sets.threeDLoMatch import ThreeDLoMatch
     from LIM.models.PREDATOR import PREDATOR, PredatorTrainer
 
-    PredatorTrainer(
+    trainer = PredatorTrainer(
         mode=mode,
         model=PREDATOR,
         dataset=ThreeDLoMatch,
-    ).train()
+    )
+    atexit.register(trainer.cleanup)
+    trainer.train()
 
 
 def train_iae(mode: "BaseTrainer.Mode") -> None:
     from LIM.data.sets.scanNet import ScanNet
     from LIM.models.IAE import IAETrainer
     from LIM.models.PREDATOR import PREDATOR
-    from LIM.training import BaseTrainer
 
-    IAETrainer(
+    trainer = IAETrainer(
         mode=mode,
         model=PREDATOR,
         dataset=ScanNet,
-    ).train()
+    )
+    atexit.register(trainer.cleanup)
+    trainer.train()
 
 
 if __name__ == "__main__":

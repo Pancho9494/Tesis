@@ -1,7 +1,8 @@
+import os
 from enum import Enum
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_serializer
-from typing import Dict, Any, Optional, Self
+from pydantic import Field, field_serializer, computed_field
+from typing import Dict, Any, Optional
 import yaml
 from pathlib import Path
 import msgpack
@@ -64,6 +65,31 @@ class AvailableTrainingModes(str, Enum):
     LATEST = "latest"
 
 
+class DistributedSettings(SerializableSettings):
+    BACKEND: str = "nccl"
+    MASTER_ADDR: str = "localhost"
+    MASETR_PORT: int = 12355
+
+    @computed_field
+    @property
+    def WORLD_SIZE(self) -> int:
+        return int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 0
+
+    @property
+    def ON(self) -> bool:
+        return self.WORLD_SIZE > 1
+
+    @computed_field
+    @property
+    def RANK(self) -> int:
+        return int(os.environ["RANK"]) if "RANK" in os.environ else 0
+
+    @computed_field
+    @property
+    def LOCAL_RANK(self) -> int:
+        return int(os.environ["LOCAL_RANK"]) if "LOCAL_RANK" in os.environ else 0
+
+
 class Trainer(SerializableSettings):
     MODE: AvailableTrainingModes
     BACKUP_DIR: Path = Path("./src/LIM/training/backups/")
@@ -100,6 +126,7 @@ class Settings(SerializableSettings):
     TRAINER: Trainer
     TESTER: Tester
     DEVICE: str
+    DISTRIBUTED: DistributedSettings = Field(default_factory=DistributedSettings)
 
     @classmethod
     def from_yaml(cls, path: str):

@@ -1,8 +1,8 @@
 #syntax=docker/dockerfile:1.7-labs
 FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
 RUN useradd -m appuser
-
 WORKDIR /home/appuser/LIM
+
 COPY src/ /home/appuser/LIM/src/
 COPY pyproject.toml /home/appuser/LIM/pyproject.toml
 USER root
@@ -35,6 +35,7 @@ RUN uv venv && \
   . /home/appuser/LIM/.venv/bin/activate && \
   uv add setuptools
 
+# BUILD OPEN3D FROM SOURCE
 USER root
 RUN apt-get remove cmake -y && \
   wget --progress=dot:giga https://cmake.org/files/v3.31/cmake-3.31.0-linux-x86_64.sh -O /opt/cmake.sh && \
@@ -49,6 +50,8 @@ ENV PATH="/home/appuser/LIM/.venv/bin:${PATH}"
 RUN bash -c "set -euo pipefail; yes | bash /tmp/Open3D/util/install_deps_ubuntu.sh || true" && \
     . /home/appuser/LIM/.venv/bin/activate && \
     bash -c "set -euo pipefail; cmake \
+    -DBUILD_PYTHON_MODULE=ON \
+    -DPYTHON_EXECUTABLE=/home/appuser/LIM/src/.venv/bin/python \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_CUDA_MODULE=ON \
     -DCMAKE_CUDA_ARCHITECTURES='70;75' \
@@ -59,7 +62,6 @@ RUN bash -c "set -euo pipefail; yes | bash /tmp/Open3D/util/install_deps_ubuntu.
     ..; \
     make -j'$(nproc)'; \
     make pip-package"
-
 WORKDIR /home/appuser/LIM
 USER appuser
 RUN uv sync && \
@@ -67,24 +69,38 @@ RUN uv sync && \
     uv pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
 USER root
 RUN rm -rf /tmp/Open3D
-USER appuser
 
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+ENV TORCH_CUDA_ARCH_LIST="7.0;7.5"
+
+# ADD FRNN
+WORKDIR /home/appuser/LIM
+RUN git clone --recursive https://github.com/lxxue/FRNN.git /home/appuser/LIM/lib/FRNN/ && \
+    uv pip install --no-build-isolation /home/appuser/LIM/lib/FRNN/external/prefix_sum/ && \
+    uv pip install --no-build-isolation -e /home/appuser/LIM/lib/FRNN
+USER appuser
 
 # Compile cpp libraries
 WORKDIR /home/appuser/LIM/src/LIM/cpp/
 RUN bash -c "set -euo pipefail; bash compile.sh -j$(nproc)"
 WORKDIR /home/appuser/LIM/
-# 
+ 
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS production
 RUN useradd -m appuser
 WORKDIR /home/appuser/LIM
 RUN apt-get update && apt-get install --no-install-recommends -y \
+    libgomp1 \ 
+    libgl1-mesa-glx \
+    libglfw3 \
+    libglew2.2 \
     libosmesa6-dev=23.2.1-1ubuntu3.1~22.04.3 && \
     rm -rf /var/lib/apt/lists/**
 
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 ENV PATH="/home/appuser/LIM/.venv/bin:${PATH}"
 USER appuser
+COPY --from=builder --chown=appuser /home/appuser/LIM/lib/FRNN /home/appuser/LIM/lib/FRNN
 COPY --from=builder --chown=appuser /home/appuser/LIM/src/ /home/appuser/LIM/src
 COPY --from=builder --chown=appuser /home/appuser/.local /home/appuser/.local
 COPY --from=builder --chown=appuser /home/appuser/LIM/.venv .venv

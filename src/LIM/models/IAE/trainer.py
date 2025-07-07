@@ -25,42 +25,53 @@ class IAETrainer(BaseTrainer):
         super(IAETrainer, self).__init__(model, dataset, mode)
         self.l1_loss = L1Loss(trainer_state=self.state, reduction="none")
         self.iou_loss = IOU(trainer_state=self.state, threshold=0.5)
-        self.model.to(self.device)
         self.average_val_iou, self.best_average_val_iou = 0.0, 0.0
 
     def _load_model(self, model: Type[Model]) -> None:
         self.model = IAE(model)
+        self.model.to(self.device)
 
     @handle_OOM
-    def _custom_train_step(self, sample: Tuple[PCloud, PCloud]) -> bool:
+    def _custom_train_step(self, sample: Tuple[PCloud, PCloud, PCloud]) -> bool:
         if settings.MODEL.ENCODER.FREEZE:
             self.model.encoder.val()
         og_points = copy.copy(sample[0])
-        cloud, implicit = sample
-        predicted_df = self.model(cloud, implicit)
-        loss = self.l1_loss.train(sample=(predicted_df, implicit.features)) / settings.TRAINER.ACCUM_STEPS
+        cloud, implicit_l1, implicit_iou = sample
+        loss = (
+            self.l1_loss.train(
+                sample=(
+                    self.model(cloud, implicit_l1),
+                    implicit_l1.features,
+                )
+            )
+            / settings.TRAINER.ACCUM_STEPS
+        )
         loss.backward()
+        self.iou_loss.train(
+            sample=(
+                self.model(og_points, implicit_iou),
+                implicit_iou.features,
+            )
+        )
 
-        # TODO: I don't like doing this like this but I'm running out of time
-        random_points_iou_file = np.load(str(random.choice(list(implicit.path[0].parent.iterdir()))))
-        implicit = PCloud.from_arr(random_points_iou_file["points"].astype(np.float32))
-        implicit.features = np.expand_dims(random_points_iou_file["df_value"].astype(np.float32), axis=1)
-        predicted_df = self.model(og_points, implicit)
-        self.iou_loss.train(sample=(predicted_df, implicit.features))
         return True
 
     @handle_OOM
-    def _custom_val_step(self, sample: Tuple[PCloud, PCloud]) -> bool:
+    def _custom_val_step(self, sample: Tuple[PCloud, PCloud, PCloud]) -> bool:
         og_points = copy.copy(sample[0])
-        cloud, implicit = sample
-        predicted_df = self.model(cloud, implicit)
-        self.l1_loss.val(sample=(predicted_df, implicit.features))
-        # TODO: I don't like doing this like this but I'm running out of time
-        random_points_iou_file = np.load(str(random.choice(list(implicit.path[0].parent.iterdir()))))
-        implicit = PCloud.from_arr(random_points_iou_file["points"].astype(np.float32))
-        implicit.features = np.expand_dims(random_points_iou_file["df_value"].astype(np.float32), axis=1)
-        predicted_df = self.model(og_points, implicit)
-        self.iou_loss.val(sample=(predicted_df, implicit.features))
+        cloud, implicit_l1, implicit_iou = sample
+        self.l1_loss.val(
+            sample=(
+                self.model(cloud, implicit_l1),
+                implicit_l1.features,
+            )
+        )
+        self.iou_loss.val(
+            sample=(
+                self.model(og_points, implicit_iou),
+                implicit_iou.features,
+            )
+        )
         self.state.val.on_best_iter = self.iou_loss.val.on_best_iter
         self.average_val_iou += self.iou_loss.val.current
         return True

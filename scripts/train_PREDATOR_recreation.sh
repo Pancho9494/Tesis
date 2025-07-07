@@ -18,6 +18,8 @@ export CURRENT_USER=$(whoami)
 cd /home/$CURRENT_USER/code/LIM &&
   apptainer run --fakeroot --nv \
     --pwd /home/appuser/LIM \
+    --bind /home/$CURRENT_USER/code/LIM/src/LIM/models/PREDATOR/trainer.py:/home/appuser/LIM/src/LIM/models/PREDATOR/trainer.py \
+    --bind /home/$CURRENT_USER/code/LIM/src/config:/home/appuser/LIM/src/config \
     --bind /home/$CURRENT_USER/code/LIM/src/LIM/data:/home/appuser/LIM/src/LIM/data \
     --bind /home/$CURRENT_USER/code/LIM/src/LIM/training/backups/:/home/appuser/LIM/src/LIM/training/backups \
     --bind /home/$CURRENT_USER/code/LIM/.aim/:/home/appuser/LIM/.aim/ \

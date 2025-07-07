@@ -1,6 +1,5 @@
 import torch
 from LIM.data.structures import PCloud
-from debug.decorators import identify_method
 
 
 class Conv2D(torch.nn.Module):
@@ -23,7 +22,6 @@ class Conv2D(torch.nn.Module):
         out += f"kernel_size: {self.kernel_size}), bias: {self.bias})"
         return out
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = self._conv2d(cloud.features)
         return cloud

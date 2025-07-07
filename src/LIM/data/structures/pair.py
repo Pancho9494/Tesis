@@ -141,7 +141,7 @@ class Pair:
         self._correspondences.target_indices
         return self._correspondences
 
-    @identify_method
+    # @identify_method
     def compute_neighbors(self, radius: float, sampleDl: Optional[float]) -> None:
         current_mix = self.mix.last
         current_source = self.source.last

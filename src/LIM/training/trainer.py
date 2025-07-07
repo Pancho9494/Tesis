@@ -7,7 +7,6 @@ from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Optional, Type
-
 import torch
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -44,7 +43,7 @@ class BaseTrainer(ABC):
     mode: Path
     device: torch.device
     state: RunState
-    model: Model
+    model: Model | torch.nn.parallel.DistributedDataParallel
     dataloader: torch.utils.data.DataLoader
     dataset: CloudDatasetsI
     optimizer: torch.optim.Optimizer
@@ -57,13 +56,32 @@ class BaseTrainer(ABC):
         mode = mode if mode is not None else BaseTrainer.Mode.NEW
         BaseTrainer.device = torch.device(self._settings.DEVICE)
         self._load_model(model)
-        self.BACKUP_DIR = mode.date(to=self.model.__class__.__name__)
+
+        if self._settings.DISTRIBUTED.ON:
+            torch.cuda.set_device(self._settings.DISTRIBUTED.LOCAL_RANK)
+            BaseTrainer.device = torch.device(self._settings.DISTRIBUTED.LOCAL_RANK)
+            self._settings.DEVICE = f"cuda:{self._settings.DISTRIBUTED.LOCAL_RANK}"
+            torch.distributed.init_process_group(
+                backend=self._settings.DISTRIBUTED.BACKEND,
+                rank=self._settings.DISTRIBUTED.RANK,
+                world_size=self._settings.DISTRIBUTED.WORLD_SIZE,
+            )
+            self.model.to(self.device)
+            self.model = torch.nn.parallel.DistributedDataParallel(
+                self.model,
+                device_ids=[self._settings.DISTRIBUTED.LOCAL_RANK],
+            )
+
+        self.BACKUP_DIR = mode.date(
+            to=self.model.module.__class__.__name__ if self._settings.DISTRIBUTED.ON else self.model.__class__.__name__
+        )
         log.info(f"Running {mode._name_} training on {self.BACKUP_DIR}")
 
         match self._settings.TRAINER.LEARNING_RATE.OPTIMIZER:
             case config.AvailableOptimizers.ADAM:
                 self.optimizer = torch.optim.Adam(
-                    self.model.parameters(), lr=(_lr := self._settings.TRAINER.LEARNING_RATE.VALUE)
+                    self.model.parameters(),
+                    lr=(_lr := self._settings.TRAINER.LEARNING_RATE.VALUE),
                 )
                 log.info(f"Chose ADAM optimizer (lr={_lr})")
             case config.AvailableOptimizers.SGD:
@@ -94,13 +112,36 @@ class BaseTrainer(ABC):
             dataset.new_instance(CloudDatasetsI.SPLITS.VAL),
         )
 
+        train_sampler = (
+            torch.utils.data.distributed.DistributedSampler(
+                self.train_set,
+                num_replicas=self._settings.DISTRIBUTED.WORLD_SIZE,
+                rank=self._settings.DISTRIBUTED.RANK,
+                shuffle=True,
+            )
+            if self._settings.DISTRIBUTED.ON
+            else None
+        )
+        val_sampler = (
+            torch.utils.data.distributed.DistributedSampler(
+                self.val_set,
+                num_replicas=self._settings.DISTRIBUTED.WORLD_SIZE,
+                rank=self._settings.DISTRIBUTED.RANK,
+                shuffle=True,
+            )
+            if self._settings.DISTRIBUTED.ON
+            else None
+        )
+
         self.train_loader = self.make_dataloader(
             self.train_set,
             num_workers=mp.cpu_count() - 4 if self._settings.TRAINER.MULTIPROCESSING else 0,
+            sampler=train_sampler,
         )
         self.val_loader = self.make_dataloader(
             self.val_set,
             num_workers=2 if self._settings.TRAINER.MULTIPROCESSING else 0,
+            sampler=val_sampler,
         )
         log.info(
             f"Loaded {dataset.__name__}: training set has {len(self.train_set)} samples, validation set has {len(self.val_set)} samples"
@@ -157,8 +198,11 @@ class BaseTrainer(ABC):
         log.info(f"Training for {self._settings.TRAINER.EPOCHS} epochs")
         for self.state.train.epoch in range(self.state.train.epoch, self._settings.TRAINER.EPOCHS):
             self.state.val.epoch = self.state.train.epoch
+            if self._settings.DISTRIBUTED.ON:
+                self.train_loader.sampler.set_epoch(self.state.train.epoch)
+                self.val_loader.sampler.set_epoch(self.state.val.epoch)
             self.optimizer.zero_grad()
-            self.__clean_memory()
+            # self.__clean_memory()
             self.__train_step()
             self.__val_step()
             self._custom_epoch_step()
@@ -169,7 +213,7 @@ class BaseTrainer(ABC):
             log.Text.from_markup(self._custom_loss_log(mode="train")), refresh_per_second=2, console=log.console
         ) as train_live:
             for self.state.train.step, sample in enumerate(self.train_loader, start=self.state.train.step):
-                self.__clean_memory()
+                # self.__clean_memory()
                 if not self._custom_train_step(sample):
                     self.train_set.force_downsample(sample)
 
@@ -197,7 +241,7 @@ class BaseTrainer(ABC):
                 log.Text.from_markup(self._custom_loss_log(mode="val")), refresh_per_second=2, console=log.console
             ) as val_live:
                 for self.state.val.step, sample in enumerate(self.val_loader):
-                    self.__clean_memory()
+                    # self.__clean_memory()
                     if not self._custom_val_step(sample=sample):
                         self.val_set.force_downsample(sample)
 
@@ -220,15 +264,25 @@ class BaseTrainer(ABC):
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
+    def cleanup(self) -> None:
+        if self._settings.DISTRIBUTED.ON and torch.distributed.is_initialized():
+            torch.distributed.barrier()
+            torch.distributed.destroy_process_group()
+
+        self.train_loader._iterator._shutdown_workers()
+        self.val_loader._iterator._shutdown_workers()
+
     def make_dataloader(
         self,
         dataset: CloudDatasetsI,
         num_workers: int,
+        sampler: torch.utils.data.distributed.DistributedSampler | None = None,
     ) -> torch.utils.data.DataLoader:
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=self._settings.TRAINER.BATCH_SIZE,
-            shuffle=True,
+            shuffle=True if sampler is None else False,
+            sampler=sampler,
             collate_fn=partial(dataset.collate_fn),
             num_workers=num_workers,
             multiprocessing_context="spawn" if self._settings.TRAINER.MULTIPROCESSING else None,

@@ -4,7 +4,6 @@ from LIM.models.layers.leakyrelu import LeakyReLU
 from LIM.models.layers.maxpool import MaxPoolNeighbors
 from LIM.data.structures import PCloud
 from copy import copy
-from debug.decorators import identify_method
 
 """
 These two were supposed to be different according to the paper
@@ -54,7 +53,6 @@ class ResBlock_A(torch.nn.Module):
     def __repr__(self) -> str:
         return f"ResBlock_A(in_dim: {self.in_dim}, out_dim: {self.out_dim}, radius={self.radius})"
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         self.skip_connection = cloud.features.clone()
         cloud.features = self.shortcut(copy(cloud)).features + self.layers(cloud).features
@@ -93,7 +91,6 @@ class ResBlock_B(torch.nn.Module):
     def __repr__(self) -> str:
         return f"ResBlock_B(in_dim: {self.in_dim}, out_dim: {self.out_dim}, radius={self.radius})"
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = self.shortcut(copy(cloud)).features + self.main(cloud).features
         return self.leaky_relu(cloud)

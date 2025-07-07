@@ -1,6 +1,5 @@
 import torch
 from LIM.data.structures import PCloud
-from debug.decorators import identify_method
 
 
 class InstanceNorm1D(torch.nn.Module):
@@ -15,7 +14,6 @@ class InstanceNorm1D(torch.nn.Module):
     def __repr__(self) -> str:
         return f"InstanceNorm1D(num_features: {self.num_features})"
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = self._instancenorm1D(cloud.features)
         return cloud

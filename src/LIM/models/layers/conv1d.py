@@ -1,7 +1,6 @@
 import torch
 from LIM.data.structures import PCloud
 from LIM.models.layers import BatchNorm
-from debug.decorators import identify_method
 from config.config import settings
 
 
@@ -53,7 +52,6 @@ class Conv1D(torch.nn.Module):
         out += ")"
         return out
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = self.layers(cloud.features)
         return cloud
@@ -83,7 +81,6 @@ class Conv1DAdapter(torch.nn.Module):
         out += f"kernel_size: {self.kernel_size}), bias: {self.bias})"
         return out
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         if self.debug_mode:
             cloud.features = cloud.features.transpose(0, 1).unsqueeze(0)  # [1, C, N]

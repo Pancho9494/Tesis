@@ -2,7 +2,6 @@ import torch
 from typing import Any
 from multimethod import multimethod
 from LIM.data.structures import PCloud
-from debug.decorators import identify_method
 
 
 class BatchNorm(torch.nn.Module):

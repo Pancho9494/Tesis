@@ -1,6 +1,5 @@
 import torch
 from LIM.data.structures.pcloud import PCloud
-from debug.decorators import identify_method
 
 
 class KNNGraph(torch.nn.Module):
@@ -13,7 +12,6 @@ class KNNGraph(torch.nn.Module):
     def __repr__(self) -> str:
         return f"KNNGraph({self.knn})"
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         cloud.features = cloud.features.squeeze(-1)
         B, C, N = cloud.features.shape

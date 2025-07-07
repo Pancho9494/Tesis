@@ -3,7 +3,6 @@ import copy
 from typing import Tuple, Callable, Any
 from LIM.models.layers import EdgeConv, Conv1DAdapter, InstanceNorm1D, ReLU
 from LIM.data.structures import PCloud, Pair
-from debug.decorators import identify_method
 from config.config import settings
 from multimethod import multimethod
 
@@ -21,7 +20,6 @@ class GNN(torch.nn.Module):
     def __repr__(self) -> str:
         return f"GNN(feature_dim: {self.feature_dim})"
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         def call_and_copy(edgeconv: Callable, cloud: PCloud) -> Tuple[PCloud, PCloud]:
             return edgeconv(cloud), copy.copy(cloud)
@@ -64,7 +62,6 @@ class CrossAttention(torch.nn.Module):
     def __repr__(self) -> str:
         return f"CrossAttention(feature_dim: {self.feature_dim}, dim: {self.dim}, num_heads: {self.num_heads})"
 
-    @identify_method
     def forward(self, source: PCloud, target: PCloud) -> Tuple[PCloud, PCloud]:
         src_attention = self._pipeline(source, target)
         src_attention.features = torch.cat([source.features, src_attention.features], dim=1)
@@ -78,7 +75,6 @@ class CrossAttention(torch.nn.Module):
 
         return source, target
 
-    @identify_method
     def _pipeline(self, source: PCloud, target: PCloud) -> torch.Tensor:
         query, key, value = copy.copy(source), copy.copy(target), copy.copy(target)
         BATCH_SIZE = query.features.size(0)
@@ -92,7 +88,6 @@ class CrossAttention(torch.nn.Module):
         src_attn.features = src_attn.features.contiguous().view(BATCH_SIZE, self.dim * self.num_heads, -1)
         return self.merge(src_attn)
 
-    @identify_method
     def _attention(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
         """
 

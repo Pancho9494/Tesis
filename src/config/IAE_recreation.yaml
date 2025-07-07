@@ -13,7 +13,7 @@ MODEL:
 DEVICE: "cuda"
 
 TRAINER:
-  MODE: "new"
+  MODE: "latest"
   BATCH_SIZE: 1
   LEARNING_RATE:
     OPTIMIZER: "adam"

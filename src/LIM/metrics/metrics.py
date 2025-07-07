@@ -51,22 +51,23 @@ class Metric(ABC):
         self.total_sum += self.current
         self.average = self.total_sum / N
 
-        self.trainer_state.tracker.track(
-            self.current,
-            name=self.name,
-            step=counters.iteration,
-            epoch=counters.epoch,
-            context=self.context | {"track": "current"},
-        )
-
-        for value in self.also_track:
+        if settings.DISTRIBUTED.RANK == 0:
             self.trainer_state.tracker.track(
-                getattr(self, value),
+                self.current,
                 name=self.name,
                 step=counters.iteration,
                 epoch=counters.epoch,
-                context=self.context | {"track": value},
+                context=self.context | {"track": "current"},
             )
+
+            for value in self.also_track:
+                self.trainer_state.tracker.track(
+                    getattr(self, value),
+                    name=self.name,
+                    step=counters.iteration,
+                    epoch=counters.epoch,
+                    context=self.context | {"track": value},
+                )
 
         return loss
 

@@ -49,7 +49,7 @@ class KPConv(torch.nn.Module, ABC):
     @abstractmethod
     def fetch(self, cloud: PCloud, max_neighbors: Optional[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
-    @identify_method
+    # @identify_method(on=True)
     def forward(self, cloud: PCloud) -> PCloud:
         q_pts, s_pts, neighbor_idxs = self.fetch(cloud)
         x = cloud.features

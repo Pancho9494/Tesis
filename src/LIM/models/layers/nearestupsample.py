@@ -1,13 +1,11 @@
 import torch
 from LIM.data.structures.pcloud import PCloud
-from debug.decorators import identify_method
 
 
 class NearestUpsample(torch.nn.Module):
     def __init__(self) -> None:
         super(NearestUpsample, self).__init__()
 
-    @identify_method
     def forward(self, cloud: PCloud) -> PCloud:
         if cloud._sub.upsamples is None:
             raise "Couldn't find upsamples for cloud"

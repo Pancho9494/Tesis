@@ -1,6 +1,5 @@
 from LIM.data.structures.pair import Pair
 from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
-from debug.decorators import identify_method
 from typing import Tuple
 from LIM.models.modelI import Model
 import torch
@@ -16,7 +15,6 @@ class PREDATOR(Model):
     def __repr__(self) -> str:
         return f"Predator({self.encoder}, {self.bottleneck}, {self.decoder})"
 
-    @identify_method
     def forward(self, pair: Pair) -> Tuple[Pair, torch.Tensor, torch.Tensor]:
         source, target = pair.source, pair.target
         (source, source_skip), (target, target_skip) = self.encoder(source), self.encoder(target)
@@ -33,7 +31,6 @@ class PREDATOR(Model):
             torch.cat((source_saliency, target_saliency), dim=cat_dim),  # saliency_score
         )
 
-    # @identify_method
     # def forward(self, pair: Pair) -> Pair:
     #     pair.join()
     #     pair, skip_connections = self.encoder(pair)
