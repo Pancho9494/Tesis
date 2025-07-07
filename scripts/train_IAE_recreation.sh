@@ -6,8 +6,8 @@
 #SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:2
 #SBATCH --mem-per-cpu 2768
-#SBATCH -o train_IAE_%j.err.out
-#SBATCH -e train_IAE_%j.err.out
+#SBATCH -o train_IAE_recreation_%j.err.out
+#SBATCH -e train_IAE_recreation_%j.err.out
 #SBATCH --mail-user=fmolinaleiv@gmail.com
 #SBATCH --mail-type=ALL
 
