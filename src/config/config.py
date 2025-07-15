@@ -1,11 +1,12 @@
 import os
 from enum import Enum
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_serializer, computed_field
-from typing import Dict, Any, Optional
+from pydantic import Field, field_serializer, computed_field, model_validator
+from typing import Any, Optional
 import yaml
 from pathlib import Path
 import msgpack
+import LIM.log as log
 
 
 class SerializableSettings(BaseSettings):
@@ -24,28 +25,42 @@ class AvailableModules(str, Enum):
     IAE = "IAE"
     PREDATOR = "PREDATOR"
     PREDATOR_PRE_TRAINED = "PREDATOR"
+    TOY_PREDATOR = "TOY PREDATOR"
+    TOY_IAE = "TOY IAE"
 
 
 class Model(SerializableSettings):
+    """
+    TODO: We should really make some subclasses to properly define which model needs what
+    """
+
     class Encoder(SerializableSettings):
-        N_HIDDEN_LAYERS: int
-        GRID_RES: int
-        FREEZE: bool = False
+        N_HIDDEN_LAYERS: int  # Must be the same in PREDATOR and IAE
+        GRID_RES: int | None = None  # IAE
+        FREEZE: bool = False  # IAE
 
     class Decoder(SerializableSettings):
-        HIDDEN_SIZE: int
-        N_BLOCKS: int
+        HIDDEN_SIZE: int | None = None  # IAE
+        N_BLOCKS: int | None = None  # IAE
 
     MODULE: AvailableModules
-    PADDING: float
+    PADDING: float | None = None
     ENCODER: Encoder
     LATENT_DIM: int
     DECODER: Decoder
 
 
 class Transforms(SerializableSettings):
-    TRAIN: Optional[Dict[str, Dict[str, Any]]] = {}
-    VAL: Optional[Dict[str, Dict[str, Any]]] = {}
+    TRAIN: dict[str, dict[str, Any]] | None = Field(default_factory=dict)
+    VAL: dict[str, dict[str, Any]] | None = Field(default_factory=dict)
+
+    @property
+    def TRAIN_TOY(self) -> dict[str, dict[str, Any]] | None:
+        return self.TRAIN
+
+    @property
+    def VAL_TOY(self) -> dict[str, dict[str, Any]] | None:
+        return self.TRAIN
 
 
 class AvailableOptimizers(str, Enum):
@@ -66,6 +81,9 @@ class AvailableTrainingModes(str, Enum):
 
 
 class DistributedSettings(SerializableSettings):
+    class Config:
+        extra = "allow"
+
     BACKEND: str = "nccl"
     MASTER_ADDR: str = "localhost"
     MASETR_PORT: int = 12355

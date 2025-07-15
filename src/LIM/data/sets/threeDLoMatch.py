@@ -1,14 +1,19 @@
-import torchvision
-from pathlib import Path
-from typing import List, Optional, Callable, Dict
-import pickle
-import numpy as np
+from __future__ import annotations
+
 import functools
-from LIM.data.structures.pcloud import PCloud, collate_cloud, Downsampler
-from LIM.data.structures.pair import Pair
-from LIM.data.sets.datasetI import CloudDatasetsI
-from LIM.data.structures.transforms import transform_factory
+import pickle
+from pathlib import Path
+from typing import Callable, Dict, List
+
+import numpy as np
+import torchvision
+
+import LIM.log as log
 from config.config import settings
+from LIM.data.sets.datasetI import CloudDatasetsI
+from LIM.data.structures.pair import Pair
+from LIM.data.structures.pcloud import Downsampler, PCloud, collate_cloud
+from LIM.data.structures.transforms import transform_factory
 
 
 class ThreeDLoMatch(CloudDatasetsI):
@@ -26,13 +31,13 @@ class ThreeDLoMatch(CloudDatasetsI):
     rot_paths: List[np.ndarray]
     trans_paths: List[np.ndarray]
     overlap_paths: List[Path]
-    split: Optional[CloudDatasetsI.SPLITS]
+    split: CloudDatasetsI.SPLITS
 
     def __repr__(self) -> str:
-        return "3DLoMatch()"
+        return f"3DLoMatch({len(self)})"
 
     def __len__(self) -> int:
-        return len(self.src_paths)
+        return len(self.src_paths) if hasattr(self, "src_paths") else 0
 
     def __getitem__(self, idx: int) -> Pair:
         src = PCloud.from_path(self.src_paths[idx])
@@ -57,21 +62,69 @@ class ThreeDLoMatch(CloudDatasetsI):
         pair.correspondences
         return pair
 
-    def __parse_info(self, info: Dict) -> "ThreeDLoMatch":
-        self.src_paths = [self.dir / Path(p) for p in info["src"]]
-        self.tgt_paths = [self.dir / Path(p) for p in info["tgt"]]
-        self.rot_paths = info["rot"]
-        self.trans_paths = info["trans"]
-        self.overlap_paths = info["overlap"]
+    def __parse_info(self, info: Dict, skip_indices: list[int] | None = None) -> ThreeDLoMatch:
+        """
+        Args:
+            info:
+            skip_indices: 1 to skip element, 0 to keep
+        """
+        if skip_indices is None:
+            skip_indices = [0 for _ in info["src"]]
+        self.src_paths = [self.dir / Path(p) for p, skip in zip(info["src"], skip_indices) if not skip]
+        self.tgt_paths = [self.dir / Path(p) for p, skip in zip(info["tgt"], skip_indices) if not skip]
+        self.rot_paths = [r for r, skip in zip(info["rot"], skip_indices) if not skip]
+        self.trans_paths = [t for t, skip in zip(info["trans"], skip_indices) if not skip]
+        self.overlap_paths = [o for o, skip in zip(info["overlap"], skip_indices) if not skip]
         return self
 
     @classmethod
-    def new_instance(cls, split: CloudDatasetsI.SPLITS) -> "ThreeDLoMatch":
+    def new_instance(cls, split: CloudDatasetsI.SPLITS) -> ThreeDLoMatch:
         instance = cls()
         instance.split = split
-        with open(cls.dir / f"{split.value}_info.pkl", "rb") as f:
+        info_path = cls.dir / f"{split.value}_info.pkl"
+        log.info(f"ThreeDLoMatch loading {info_path}")
+        with open(info_path, "rb") as f:
             info = pickle.load(f)
-        return instance.__parse_info(info)
+
+        log.info(f"{info['src'][0]=}")
+
+        foo = {k: len(v) for k, v in info.items()}
+        log.info(f"{foo}")
+        out = instance.__parse_info(info)
+        bar = {}
+        for name in ["src", "tgt", "rot", "trans", "overlap"]:
+            bar[name] = len(getattr(instance, f"{name}_paths"))
+        log.info(f"{bar}")
+        return out
+
+    @classmethod
+    def make_toy_pkl(cls) -> None:
+        log.info("Making toy dataset lists for ThreeDLoMatch")
+        instance = cls()
+        with open(cls.dir / "train_info.pkl", "rb") as f:
+            info = pickle.load(f)
+        instance = instance.__parse_info(info, [0 if "7-scenes-office" in p else 1 for p in info["src"]])
+
+        arr = np.arange(0, len(instance.src_paths))
+        np.random.shuffle(arr)
+        train, val, test = np.split(
+            arr,
+            [int(0.8 * len(arr)), int(0.9 * len(arr))],  # 80%, 10%, 10%
+        )
+        new_infos: dict[str, dict[str, list[Path] | np.ndarray]] = {
+            "new_train_info": {},
+            "new_val_info": {},
+            "new_test_info": {},
+        }
+        for split, indices in zip(("train", "val", "test"), (train, val, test)):
+            for arr_name in ["src", "tgt", "rot", "trans", "overlap"]:
+                new_infos[f"new_{split}_info"][arr_name] = np.array(getattr(instance, f"{arr_name}_paths"))[indices]
+
+        for split in ["train", "val", "test"]:
+            with open(instance.dir / f"{split}_toy_info.pkl", "wb") as file:
+                foo = {k: len(v) for k, v in new_infos[f"new_{split}_info"].items()}
+                log.info(f"Writing to {instance.dir / f'{split}_toy_info.pkl'}\ndict with shapes: {foo}")
+                pickle.dump(new_infos[f"new_{split}_info"], file)
 
     @property
     def collate_fn(self) -> Callable:
@@ -79,6 +132,8 @@ class ThreeDLoMatch(CloudDatasetsI):
 
 
 def collate_3dmatch(batch: List[Pair], split: CloudDatasetsI.SPLITS) -> Pair:
+    if settings is None:
+        raise RuntimeError("settings has not been initialized")
     sources, targets, GT_tf_matrices = [], [], []
     for pair in batch:
         sources.append(pair.source)

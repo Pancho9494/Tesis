@@ -1,7 +1,8 @@
-from torch.utils.data import Dataset
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict
 from enum import Enum
+from typing import Any, Callable, Dict
+
+from torch.utils.data import Dataset
 
 
 class CloudDatasetsI(ABC, Dataset):
@@ -11,6 +12,9 @@ class CloudDatasetsI(ABC, Dataset):
         TRAIN = "train"
         VAL = "val"
         TEST = "test"
+        TOY_TRAIN = "train_toy"
+        TOY_VAL = "val_toy"
+        TOY_TEST = "test_toy"
 
     @abstractmethod
     def __len__(self) -> int: ...
@@ -30,7 +34,7 @@ class CloudDatasetsI(ABC, Dataset):
         """
         ...
 
-    def force_downsample(self, sample: any) -> None:
+    def force_downsample(self, sample: Any) -> None:
         """
         Keep track of the max size of each pair the computer can handle in order to avoid pytorch OOMs
         """

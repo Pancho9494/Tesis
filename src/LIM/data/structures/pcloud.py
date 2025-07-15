@@ -7,9 +7,13 @@ import torch
 import matplotlib as mpl
 from enum import Enum
 from config.config import settings
-import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
-import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
-import frnn
+
+try:
+    import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
+    import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
+    import frnn
+except ModuleNotFoundError:
+    print("Unable to load cpp and frnn")
 
 
 class Shape:
@@ -201,6 +205,26 @@ class PCloud:
         self._features = value.to(self.device)
 
     # =========================================== METHODS ===========================================#
+    def show(self) -> None:
+        WIDTH, HEIGHT = 3840, 2160
+        ROTATE_X, ROTATE_Y = 0.0, 0.0
+        BLUE = np.array([0.0, 0.651, 0.929])
+
+        pcd = Painter.Uniform(BLUE, compute_normals=True)(self).pcd
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name=str(self.path), width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
+        vis.get_render_option().background_color = [0, 0, 0]
+        vis.add_geometry(pcd)
+
+        while True:
+            vis.update_geometry(pcd)
+            if not vis.poll_events():
+                break
+            ctr = vis.get_view_control()
+            ctr.rotate(ROTATE_X, ROTATE_Y)
+            vis.update_renderer()
+        vis.destroy_window()
+
     def unsqueeze(self) -> None:
         self.points = self.points.reshape((1, -1, 3))
         self.features = self.features.reshape((1, -1, 1))

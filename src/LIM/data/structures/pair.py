@@ -7,9 +7,11 @@ from typing import Optional, Iterable, Tuple, Any
 from config.config import settings
 from LIM.data.structures.pcloud import PCloud, Painter
 
-from debug.decorators import identify_method
 import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
+import os
+
+os.environ["XDG_SESSION_TYPE"] = "x11"
 
 
 class Correspondences:
@@ -248,10 +250,18 @@ class Pair:
 
         src_pcd = Painter.Uniform(YELLOW, compute_normals=True)(self.source)
         tgt_pcd = Painter.Uniform(BLUE, compute_normals=True)(self.target)
+
+        gt_src_pcd = copy.deepcopy(src_pcd).pcd.transform(self.GT_tf_matrix)
+
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name="raw", width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
         vis.add_geometry(src_pcd.pcd)
         vis.add_geometry(tgt_pcd.pcd)
+
+        vis2 = o3d.visualization.Visualizer()
+        vis2.create_window(window_name="ground truth", width=WIDTH, height=HEIGHT, left=WIDTH, top=HEIGHT)
+        vis2.add_geometry(gt_src_pcd)
+        vis2.add_geometry(tgt_pcd.pcd)
 
         if predicted_tf is not None:
             vis3 = o3d.visualization.Visualizer()
@@ -262,7 +272,7 @@ class Pair:
             vis3.add_geometry(tgt_pcd.pcd)
 
         while True:
-            # vis.update_geometry(gt_src_pcd)
+            vis.update_geometry(src_pcd.pcd)
             vis.update_geometry(tgt_pcd.pcd)
             if not vis.poll_events():
                 break
@@ -270,13 +280,13 @@ class Pair:
             ctr.rotate(ROTATE_X, ROTATE_Y)
             vis.update_renderer()
 
-            # vis2.update_geometry(gt_src_pcd)
-            # vis2.update_geometry(gt_tgt.pcd)
-            # if not vis2.poll_events():
-            #     break
-            # ctr = vis2.get_view_control()
-            # ctr.rotate(ROTATE_X, ROTATE_Y)
-            # vis2.update_renderer()
+            vis2.update_geometry(gt_src_pcd)
+            vis2.update_geometry(tgt_pcd.pcd)
+            if not vis2.poll_events():
+                break
+            ctr = vis2.get_view_control()
+            ctr.rotate(ROTATE_X, ROTATE_Y)
+            vis2.update_renderer()
 
             if predicted_tf is not None:
                 vis3.update_geometry(pred_src_pcd)
@@ -288,7 +298,7 @@ class Pair:
                 vis3.update_renderer()
 
         vis.destroy_window()
-        # vis2.destroy_window()
+        vis2.destroy_window()
 
         if predicted_tf is not None:
             vis3.destroy_window()

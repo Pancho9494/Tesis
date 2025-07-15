@@ -107,10 +107,19 @@ class BaseTrainer(ABC):
                 self.state.load(run=self.BACKUP_DIR, suffix="latest")
 
     def __load_dataloaders(self, dataset: CloudDatasetsI) -> None:
-        self.train_set, self.val_set = (
-            dataset.new_instance(CloudDatasetsI.SPLITS.TRAIN),
-            dataset.new_instance(CloudDatasetsI.SPLITS.VAL),
-        )
+        if "TOY" in self._settings.MODEL.MODULE:
+            self.train_set, self.val_set = (
+                dataset.new_instance(CloudDatasetsI.SPLITS.TOY_TRAIN),
+                dataset.new_instance(CloudDatasetsI.SPLITS.TOY_VAL),
+            )
+            log.info(self.train_set)
+        else:
+            self.train_set, self.val_set = (
+                dataset.new_instance(CloudDatasetsI.SPLITS.TRAIN),
+                dataset.new_instance(CloudDatasetsI.SPLITS.VAL),
+            )
+
+        log.info(f"N TRAIN SAMPLES = {len(self.train_set)}, N VAL SAMPLES = {len(self.val_set)}")
 
         train_sampler = (
             torch.utils.data.distributed.DistributedSampler(
@@ -202,7 +211,7 @@ class BaseTrainer(ABC):
                 self.train_loader.sampler.set_epoch(self.state.train.epoch)
                 self.val_loader.sampler.set_epoch(self.state.val.epoch)
             self.optimizer.zero_grad()
-            # self.__clean_memory()
+            self.__clean_memory()
             self.__train_step()
             self.__val_step()
             self._custom_epoch_step()
@@ -213,7 +222,7 @@ class BaseTrainer(ABC):
             log.Text.from_markup(self._custom_loss_log(mode="train")), refresh_per_second=2, console=log.console
         ) as train_live:
             for self.state.train.step, sample in enumerate(self.train_loader, start=self.state.train.step):
-                # self.__clean_memory()
+                self.__clean_memory()
                 if not self._custom_train_step(sample):
                     self.train_set.force_downsample(sample)
 
