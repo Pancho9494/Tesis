@@ -1,9 +1,13 @@
 from abc import ABC, abstractmethod
-import aim
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Protocol
+import copy
+import aim
+import msgpack
 import torch
-from typing import Any, Callable, Protocol, List, Dict
 
+import LIM.log as log
 from config.config import settings
 
 
@@ -50,7 +54,6 @@ class Metric(ABC):
         N = counters.iteration + 1
         self.total_sum += self.current
         self.average = self.total_sum / N
-
         if settings.DISTRIBUTED.RANK == 0:
             self.trainer_state.tracker.track(
                 self.current,
@@ -77,6 +80,17 @@ class Metric(ABC):
     def get(self, value: str) -> float:
         assert (value := value.lower().strip()) in ["best", "current", "total_sum", "average"]
         return getattr(self, value)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = copy.copy(self.__dict__)
+        del data["trainer_state"]
+        del data["custom_function"]
+        return data
+
+    def from_dict(self, data: dict[str, Any]) -> None:
+        for key, value in data.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
 
 
 class Loss(ABC):
@@ -116,6 +130,34 @@ class Loss(ABC):
 
     @abstractmethod
     def __call__(self, sample: Any) -> torch.Tensor: ...
+
+    def save(self, run: str = "", suffix: str = "") -> None:
+        if settings.DISTRIBUTED.RANK != 0:
+            return
+        path = Path(f"{run}/{self.__class__.__name__}_{suffix}.msgpack")
+        log.info(f"{self.__class__.__name__} saving backup to {path}")
+        with path.open("wb") as f:
+            data = msgpack.packb(
+                {
+                    "train": self.train.to_dict(),
+                    "val": self.val.to_dict(),
+                },
+                use_bin_type=True,
+            )
+            f.write(data)
+
+    def load(self, run: str | Path = "", suffix: str = "") -> None:
+        path = Path(f"{run}/{self.__class__.__name__}_{suffix}.msgpack")
+        if not path.exists():
+            log.error(f"Couldn't find {self.__class__.__name__} backup at {path}")
+            return
+        log.info(f"{self.__class__.__name__} loading backup from {path}")
+
+        with path.open("rb") as f:
+            data = msgpack.load(f, raw=False)
+
+        self.train.from_dict(data["train"])
+        self.val.from_dict(data["val"])
 
 
 class MultiLoss:

@@ -86,15 +86,10 @@ class ThreeDLoMatch(CloudDatasetsI):
         with open(info_path, "rb") as f:
             info = pickle.load(f)
 
-        log.info(f"{info['src'][0]=}")
-
-        foo = {k: len(v) for k, v in info.items()}
-        log.info(f"{foo}")
         out = instance.__parse_info(info)
         bar = {}
         for name in ["src", "tgt", "rot", "trans", "overlap"]:
             bar[name] = len(getattr(instance, f"{name}_paths"))
-        log.info(f"{bar}")
         return out
 
     @classmethod
@@ -117,7 +112,12 @@ class ThreeDLoMatch(CloudDatasetsI):
             "new_test_info": {},
         }
         for split, indices in zip(("train", "val", "test"), (train, val, test)):
-            for arr_name in ["src", "tgt", "rot", "trans", "overlap"]:
+            for arr_name in ["src", "tgt"]:
+                new_infos[f"new_{split}_info"][arr_name] = [
+                    "/".join(str(p).split("/")[5:]) for p in np.array(getattr(instance, f"{arr_name}_paths"))[indices]
+                ]
+
+            for arr_name in ["rot", "trans", "overlap"]:
                 new_infos[f"new_{split}_info"][arr_name] = np.array(getattr(instance, f"{arr_name}_paths"))[indices]
 
         for split in ["train", "val", "test"]:

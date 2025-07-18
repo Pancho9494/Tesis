@@ -24,6 +24,7 @@ class IAETrainer(BaseTrainer):
         self.l1_loss = L1Loss(trainer_state=self.state, reduction="none")
         self.iou_loss = IOU(trainer_state=self.state, threshold=0.5)
         self.average_val_iou, self.best_average_val_iou = 0.0, 0.0
+        self.losses.extend([self.l1_loss, self.iou_loss])
 
     def _load_model(self, model: Type[Model]) -> None:
         self.model = IAE(model)

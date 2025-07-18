@@ -23,7 +23,7 @@ class L1Loss(Loss):
         self.loss = torch.nn.L1Loss(reduction=self.reduction)
 
     def __repr__(self) -> str:
-        return f"L1Loss(reduction={self.reduction})"
+        return f"L1Loss(reduction={self.reduction}, train={self.train.current:.2f}, val={self.val.current:.2f})"
 
     def __call__(self, sample: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         predicted, real = sample
@@ -39,7 +39,7 @@ class IOU(Loss):
         self.THRESHOLD = threshold
 
     def __repr__(self) -> str:
-        return f"IOU(threshold={self.THRESHOLD})"
+        return f"IOU(threshold={self.THRESHOLD}, train={self.train.current:.2f}, val={self.val.current:.2f})"
 
     def __call__(self, sample: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         predicted, real = sample
@@ -75,7 +75,7 @@ class OverlapLoss(Loss):
         self.weight = weight
 
     def __repr__(self):
-        return f"OverlapLoss(weight={self.weight})"
+        return f"OverlapLoss(weight={self.weight}, train={self.train.current:.2f}, val={self.val.current:.2f})"
 
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
@@ -119,7 +119,7 @@ class MatchabilityLoss(Loss):
         self.weight = weight
 
     def __repr__(self):
-        return f"MatchabilityLoss(weight={self.weight})"
+        return f"MatchabilityLoss(weight={self.weight}, train={self.train.current:.2f}, val={self.val.current:.2f})"
 
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
@@ -202,7 +202,7 @@ class CircleLoss(Loss):
         self.weight = weight
 
     def __repr__(self):
-        return f"CircleLoss(weight={self.weight})"
+        return f"CircleLoss(weight={self.weight}, train={self.train.current:.2f}, val={self.val.current:.2f})"
 
     def __call__(self, pair: Pair) -> torch.Tensor:
         if self.weight <= 0.0:
@@ -295,7 +295,7 @@ class FeatureMatchRecall(Loss):
         super().__init__(trainer_state, y0to1=True, also_track=["average"])
 
     def __repr__(self) -> str:
-        return "FeatureMatchRecal()"
+        return f"FeatureMatchRecal(train={self.train.current:.2f}, val={self.val.current:.2f})"
 
     def __call__(self, sample: Pair) -> torch.Tensor:
         global coords_dist, feats_dist

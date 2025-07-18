@@ -35,6 +35,11 @@ class PredatorTrainer(BaseTrainer):
             ],
         )
         self.feature_match_recall = FeatureMatchRecall(trainer_state=self.state)
+        self.losses.extend(self.multi_loss.losses + [self.feature_match_recall])
+
+        if self._settings.TRAINER.MODE.value in [BaseTrainer.Mode.FIXED.value, BaseTrainer.Mode.LATEST.value]:
+            for loss in self.losses:
+                loss.load(run=self.BACKUP_DIR, suffix="latest")
 
     def _load_model(self, model: Type[Model]) -> None:
         self.model = model()
@@ -45,8 +50,11 @@ class PredatorTrainer(BaseTrainer):
         sample.correspondences
         sample, overlaps, saliencies = self.model(sample)
         sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)
-        self.multi_loss.losses[1].current_overlap_score = overlaps  # TODO: this should at least be a dict
-        self.multi_loss.losses[2].current_saliency_score = saliencies  # TODO: this should at least be a dict
+
+        # TODO: these two should at least be a dict
+        self.multi_loss.losses[1].current_overlap_score = overlaps
+        self.multi_loss.losses[2].current_saliency_score = saliencies
+
         loss = self.multi_loss.train(sample) / self._settings.TRAINER.ACCUM_STEPS
         self.feature_match_recall.train(sample)
         loss.backward()

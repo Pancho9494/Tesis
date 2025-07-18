@@ -19,7 +19,7 @@ def train_predator(mode: BaseTrainer.Mode, pre_trained: bool = False) -> None:
     from LIM.data.sets.threeDLoMatch import ThreeDLoMatch
     from LIM.models.PREDATOR import PREDATOR, PredatorTrainer
 
-    # ThreeDLoMatch.make_toy_pkl() # I removed `self.dir` from the __parse_info method
+    # ThreeDLoMatch.make_toy_pkl()  # I removed `self.dir` from the __parse_info method
     trainer = PredatorTrainer(
         mode=mode,
         model=PREDATOR,

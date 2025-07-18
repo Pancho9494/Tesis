@@ -55,6 +55,7 @@ class RunState:
 
         if not path.exists():
             log.error(f"Couldn't find RunState backup at {path}")
+            return
 
         log.info(f"RunState loading backup from {path}")
 
@@ -67,22 +68,21 @@ class RunState:
             self.tracker = aim.Run(run_hash=data["tracker_hash"])
 
     def save(self, run: str = "", suffix: str = "") -> None:
-        """ """
         if settings.DISTRIBUTED.RANK != 0:
             return
         path = Path(f"{run}/run_state_{suffix}.msgpack")
         log.info(f"RunState saving backup to {path}")
-        tracker_hash = self.tracker_hash if settings.DISTRIBUTED.RANK == 0 else None
+        tracker_hash = self.tracker.hash if settings.DISTRIBUTED.RANK == 0 else None
         with path.open("wb") as f:
-            msgpack.dump(
+            data = msgpack.packb(
                 {
                     "train": asdict(self.train),
                     "val": asdict(self.val),
                     "tracker_hash": tracker_hash,
                 },
-                f,
                 use_bin_type=True,
             )
+            f.write(data)
 
     def save_async(self, run: str | Path | PathLike = "", suffix: str = "") -> None:
         backup_executor.submit(self.save, run, suffix)

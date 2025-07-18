@@ -7,12 +7,14 @@ from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Optional, Type
+
 import torch
 from torch.optim.lr_scheduler import LRScheduler
 
 import config.config as config
 import LIM.log as log
 from LIM.data.sets import CloudDatasetsI
+from LIM.metrics import Loss
 from LIM.models.modelI import Model
 from LIM.training.run_state import RunState
 
@@ -48,10 +50,12 @@ class BaseTrainer(ABC):
     dataset: CloudDatasetsI
     optimizer: torch.optim.Optimizer
     scheduler: LRScheduler
+    losses: list[Loss]
     _settings: config.Settings
 
     def __init__(self, model: Type[Model], dataset: Type[CloudDatasetsI], mode: "Mode") -> None:
         assert config.settings is not None
+        self.losses = []
         self._settings = config.settings
         mode = mode if mode is not None else BaseTrainer.Mode.NEW
         BaseTrainer.device = torch.device(self._settings.DEVICE)
@@ -112,14 +116,11 @@ class BaseTrainer(ABC):
                 dataset.new_instance(CloudDatasetsI.SPLITS.TOY_TRAIN),
                 dataset.new_instance(CloudDatasetsI.SPLITS.TOY_VAL),
             )
-            log.info(self.train_set)
         else:
             self.train_set, self.val_set = (
                 dataset.new_instance(CloudDatasetsI.SPLITS.TRAIN),
                 dataset.new_instance(CloudDatasetsI.SPLITS.VAL),
             )
-
-        log.info(f"N TRAIN SAMPLES = {len(self.train_set)}, N VAL SAMPLES = {len(self.val_set)}")
 
         train_sampler = (
             torch.utils.data.distributed.DistributedSampler(
@@ -219,25 +220,32 @@ class BaseTrainer(ABC):
     def __train_step(self) -> bool:
         self.model.train()
         with log.Live(
-            log.Text.from_markup(self._custom_loss_log(mode="train")), refresh_per_second=2, console=log.console
+            log.Text.from_markup(self._custom_loss_log(mode="train")),
+            refresh_per_second=2,
+            console=log.console,
         ) as train_live:
             for self.state.train.step, sample in enumerate(self.train_loader, start=self.state.train.step):
                 self.__clean_memory()
                 if not self._custom_train_step(sample):
                     self.train_set.force_downsample(sample)
 
-                if self.state.on_accumulation_step or (
-                    _ON_LAST_BATCH := (self.state.train.step + 1) == len(self.train_loader)
+                if (
+                    self.state.on_accumulation_step
+                    or (_ON_LAST_BATCH := (self.state.train.step + 1) == len(self.train_loader))
+                    or True
                 ):
                     self.optimizer.step()
                     self.optimizer.zero_grad()
 
                 if self.state.on_backup_step:
                     log.info(
-                        f"Making backup on step {self.state.train.step}, with current state:\n{self._custom_loss_log('train')}"
+                        f"Making backup of latest model on step {self.state.train.step}, "
+                        + f"with current state:\n{self._custom_loss_log('train')}"
                     )
-                    self.model.save_async(run=self.BACKUP_DIR, suffix="latest")
-                    self.state.save_async(run=self.BACKUP_DIR, suffix="latest")
+                    self.model.save(run=self.BACKUP_DIR, suffix="latest")
+                    self.state.save(run=self.BACKUP_DIR, suffix="latest")
+                    for loss in self.losses:
+                        loss.save(run=self.BACKUP_DIR, suffix="latest")
 
                 train_live.update(log.Text.from_markup(self._custom_loss_log(mode="train")))
                 self.state.train.iteration += 1
@@ -247,19 +255,24 @@ class BaseTrainer(ABC):
         self.model.eval()
         with torch.no_grad():
             with log.Live(
-                log.Text.from_markup(self._custom_loss_log(mode="val")), refresh_per_second=2, console=log.console
+                log.Text.from_markup(self._custom_loss_log(mode="val")),
+                refresh_per_second=2,
+                console=log.console,
             ) as val_live:
                 for self.state.val.step, sample in enumerate(self.val_loader):
-                    # self.__clean_memory()
+                    self.__clean_memory()
                     if not self._custom_val_step(sample=sample):
                         self.val_set.force_downsample(sample)
 
                     if self.state.val.on_best_iter:
                         log.info(
-                            f"Saving best model on step {self.state.train.step}, with current state:\n{self._custom_loss_log('val')}"
+                            f"Saving best model on step {self.state.train.step}, "
+                            + f"with current state:\n{self._custom_loss_log('val')}"
                         )
-                        self.model.save_async(run=self.BACKUP_DIR, suffix="best")
-                        self.state.save_async(run=self.BACKUP_DIR, suffix="best")
+                        self.model.save(run=self.BACKUP_DIR, suffix="best")
+                        self.state.save(run=self.BACKUP_DIR, suffix="best")
+                        for loss in self.losses:
+                            loss.save(run=self.BACKUP_DIR, suffix="best")
                         self.state.val.on_best_iter = False
 
                     val_live.update(log.Text.from_markup(self._custom_loss_log(mode="val")))
@@ -306,9 +319,9 @@ class BaseTrainer(ABC):
         instances, because different instances will modify the same global value of _path.
         """
 
-        NEW = "Create a new run"
-        FIXED = "Choose a run with YYYYMMDD_HHMMSS format"
-        LATEST = "Start with latest run present in the backups folder"
+        NEW = "new"
+        FIXED = "fixed"
+        LATEST = "latest"
         _date: Optional[datetime]
         _settings: config.Settings
 
@@ -358,7 +371,6 @@ class BaseTrainer(ABC):
                             return False
 
                     subdirs = [p for p in resulting_path.iterdir() if p.is_dir() and is_valid_timestamp(p.name)]
-
                     resulting_path = max(subdirs, key=lambda p: datetime.strptime(p.name, DATE_FORMAT))
 
             resulting_path.mkdir(parents=True, exist_ok=True)
