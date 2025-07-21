@@ -1,12 +1,12 @@
 import os
 from enum import Enum
-from pydantic_settings import BaseSettings
-from pydantic import Field, field_serializer, computed_field, model_validator
-from typing import Any, Optional
-import yaml
 from pathlib import Path
+from typing import Any, Optional
+
 import msgpack
-import LIM.log as log
+import yaml
+from pydantic import Field, computed_field, field_serializer
+from pydantic_settings import BaseSettings
 
 
 class SerializableSettings(BaseSettings):
@@ -38,6 +38,8 @@ class Model(SerializableSettings):
         N_HIDDEN_LAYERS: int  # Must be the same in PREDATOR and IAE
         GRID_RES: int | None = None  # IAE
         FREEZE: bool = False  # IAE
+        PRE_TRAINED: bool = False  # PREDATOR
+        PRE_TRAIN_DATE: str | None = None  # YYYYMMDD_HHMMSS
 
     class Decoder(SerializableSettings):
         HIDDEN_SIZE: int | None = None  # IAE
@@ -55,11 +57,11 @@ class Transforms(SerializableSettings):
     VAL: dict[str, dict[str, Any]] | None = Field(default_factory=dict)
 
     @property
-    def TRAIN_TOY(self) -> dict[str, dict[str, Any]] | None:
+    def TOY_TRAIN(self) -> dict[str, dict[str, Any]] | None:
         return self.TRAIN
 
     @property
-    def VAL_TOY(self) -> dict[str, dict[str, Any]] | None:
+    def TOY_VAL(self) -> dict[str, dict[str, Any]] | None:
         return self.TRAIN
 
 

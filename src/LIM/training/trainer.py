@@ -54,6 +54,7 @@ class BaseTrainer(ABC):
     _settings: config.Settings
 
     def __init__(self, model: Type[Model], dataset: Type[CloudDatasetsI], mode: "Mode") -> None:
+        log.info("Calling BaseTrainer.__init__")
         assert config.settings is not None
         self.losses = []
         self._settings = config.settings
@@ -154,7 +155,7 @@ class BaseTrainer(ABC):
             sampler=val_sampler,
         )
         log.info(
-            f"Loaded {dataset.__name__}: training set has {len(self.train_set)} samples, validation set has {len(self.val_set)} samples"
+            f"Loaded {dataset.__name__}.{self.train_set.split} set has {len(self.train_set)} samples, {dataset.__name__}.{self.val_set.split} set has {len(self.val_set)} samples"
         )
 
     def __repr__(self) -> str:

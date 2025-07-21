@@ -17,6 +17,7 @@ class PredatorTrainer(BaseTrainer):
     _settings: config.Settings
 
     def __init__(self, model: Type[Model], dataset: Type[CloudDatasetsI], mode: BaseTrainer.Mode) -> None:
+        log.info("Calling PredatorTrainer.__init__")
         super(PredatorTrainer, self).__init__(model, dataset, mode)
         assert config.settings is not None
         self._settings = config.settings
@@ -47,6 +48,8 @@ class PredatorTrainer(BaseTrainer):
 
     @handle_OOM
     def _custom_train_step(self, sample: Pair) -> bool:
+        if config.settings.MODEL.ENCODER.FREEZE:
+            self.model.encoder.eval()
         sample.correspondences
         sample, overlaps, saliencies = self.model(sample)
         sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)

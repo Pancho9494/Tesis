@@ -62,7 +62,7 @@ class ScanNet(CloudDatasetsI):
             for scene in self.scenes:
                 samples.extend(scene.rglob("pointcloud/**/*.bin"))
             self._cached_len = len(samples)
-        return f"ScanNet({self._cached_len})"
+        return f"ScanNet(split={self.split.name}, scenes={len(self)}, total_pointclouds={self._cached_len})"
 
     def __len__(self) -> int:
         return len(self.scenes) if hasattr(self, "scenes") else 0
@@ -117,40 +117,35 @@ class ScanNet(CloudDatasetsI):
         return cloud, implicit_l1, implicit_iou
 
     @classmethod
-    def new_instance(cls, split: CloudDatasetsI.SPLITS) -> ScanNet:
+    def new_instance(cls, split: CloudDatasetsI.SPLITS | str) -> ScanNet:
         instance = cls()
-        instance.split = split
+        instance.split = split if isinstance(split, CloudDatasetsI.SPLITS) else CloudDatasetsI.SPLITS(split)
         instance.scenes = []
         for room in instance.rooms:
-            with open(room / f"{split.value}.lst") as file:
+            with open(room / f"{instance.split.value}.lst") as file:
                 subset = file.read().splitlines()
             instance.scenes.extend([room / filename for filename in subset if filename and (room / filename).exists()])
-
         return instance
 
     @classmethod
     def make_toy_lst(cls) -> ScanNet:
         instance = cls()
-        office_scenes = [
-            "scene0010_00_*",
-            "scene0010_01_*",
-            "scene0040_00_*",
-            "scene0040_01_*",
-            "scene0089_00_*",
-            "scene0089_01_*",
-            "scene0089_02_*",
-            "scene0098_00_*",
-            "scene0098_01_*",
-            "scene0131_00_*",
-            "scene0131_01_*",
-            "scene0131_02_*",
-            "scene0255_00_*",
-            "scene0255_01_*",
-            "scene0255_02_*",
-            "scene0464_00_*",
+        scenes = [
+            "scene0115_00_*",
+            "scene0115_01_*",
+            "scene0115_02_*",
+            "scene0176_00_*",
+            "scene0216_00_*",
+            "scene0502_00_*",
+            "scene0502_01_*",
+            "scene0502_02_*",
+            "scene0533_00_*",
+            "scene0533_01_*",
+            "scene0618_00_*",
         ]
+
         instance.scenes = []
-        for scene in office_scenes:
+        for scene in scenes:
             instance.scenes.extend([p.stem for p in (instance.dir / "rooms_01").glob(scene)])
 
         arr = np.arange(0, len(instance.scenes))
@@ -161,7 +156,9 @@ class ScanNet(CloudDatasetsI):
         )
         scenes = np.array(instance.scenes)
         for split, indices in zip(("train", "val", "test"), (train, val, test)):
-            with open(instance.dir / "rooms_01" / f"{split}_toy.lst", "w") as file:
+            file_path = instance.dir / "rooms_01" / f"{split}_gameroom.lst"
+            with open(file_path, "w") as file:
+                log.info(f"Writing to {file_path}")
                 file.write("\n".join(line for line in scenes[indices]))
         return instance
 
@@ -234,13 +231,13 @@ def collate_scannet(
 
     cloud_tf = torchvision.transforms.Compose(
         transform_factory(
-            getattr(settings.TRAINER.POINTCLOUD_TF, split.value.upper()),
+            getattr(settings.TRAINER.POINTCLOUD_TF, split.name.upper()),
         )
     )
     cloud_batch = cloud_tf(collate_cloud(clouds))
     implicit_tf = torchvision.transforms.Compose(
         transform_factory(
-            getattr(settings.TRAINER.IMPLICIT_GRID_TF, split.value.upper()),
+            getattr(settings.TRAINER.IMPLICIT_GRID_TF, split.name.upper()),
         )
     )
     implicit_l1_batch = implicit_tf(collate_cloud(implicit_l1s))

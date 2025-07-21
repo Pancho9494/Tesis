@@ -31,17 +31,23 @@ def train_predator(mode: BaseTrainer.Mode, pre_trained: bool = False) -> None:
 
 def train_iae(mode: BaseTrainer.Mode) -> None:
     from LIM.data.sets.scanNet import ScanNet
-    from LIM.models.IAE import IAETrainer
-    from LIM.models.PREDATOR import PREDATOR
+
+    # from LIM.models.IAE import IAETrainer
+    # from LIM.models.PREDATOR import PREDATOR
+    from LIM.data.sets import CloudDatasetsI
 
     # ScanNet.make_toy_lst()
-    trainer = IAETrainer(
-        mode=mode,
-        model=PREDATOR,
-        dataset=ScanNet,
-    )
-    atexit.register(trainer.cleanup)
-    trainer.train()
+    # foo = ScanNet.new_instance(split="train_offices")
+    print(ScanNet.new_instance(split=CloudDatasetsI.SPLITS.TOY_TRAIN))
+    print(ScanNet.new_instance(split=CloudDatasetsI.SPLITS.TOY_VAL))
+    print(ScanNet.new_instance(split=CloudDatasetsI.SPLITS.TOY_TEST))
+    # trainer = IAETrainer(
+    #    mode=mode,
+    #    model=PREDATOR,
+    #    dataset=ScanNet,
+    # )
+    # atexit.register(trainer.cleanup)
+    # trainer.train()
 
 
 if __name__ == "__main__":

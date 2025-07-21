@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from os import PathLike
 from pathlib import Path
 import torch
-import config.config as config
 import LIM.log as log
 import msgpack
 import msgpack_numpy as msgpk_np

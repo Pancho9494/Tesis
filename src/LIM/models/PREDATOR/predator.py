@@ -1,19 +1,45 @@
-from LIM.data.structures.pair import Pair
-from LIM.models.PREDATOR import Encoder, BottleNeck, Decoder
 from typing import Tuple
-from LIM.models.modelI import Model
+
 import torch
+
+import LIM.log as log
+from config.config import settings
+from LIM.data.structures.pair import Pair
+from LIM.models.IAE import IAE
+from LIM.models.modelI import Model
+from LIM.models.PREDATOR import BottleNeck, Decoder, Encoder
 
 
 class PREDATOR(Model):
     def __init__(self) -> None:
+        log.info("Calling PREDATOR.__init__")
         super(PREDATOR, self).__init__()
         self.encoder = Encoder()
         self.bottleneck = BottleNeck()
         self.decoder = Decoder()
 
+        self._load_pre_training()
+
     def __repr__(self) -> str:
         return f"Predator({self.encoder}, {self.bottleneck}, {self.decoder})"
+
+    def _load_pre_training(self) -> None:
+        if not settings.MODEL.ENCODER.PRE_TRAINED:
+            return
+        run_path = settings.TRAINER.BACKUP_DIR / "IAE" / settings.MODEL.ENCODER.PRE_TRAIN_DATE
+        log.info(f"Loading pre_trained weights from: {run_path}")
+        pre_training_IAE = IAE(model=self)
+        pre_training_IAE.load(run=run_path, suffix="best")
+
+        self.encoder.load_state_dict(pre_training_IAE.encoder.state_dict())
+        log.info("Successfuly loaded encoder weights")
+
+        if settings.MODEL.ENCODER.FREEZE:
+            log.info("Freezing encoder weights")
+            self.encoder.requires_grad_(False)
+
+        del pre_training_IAE
+        return
 
     def forward(self, pair: Pair) -> Tuple[Pair, torch.Tensor, torch.Tensor]:
         source, target = pair.source, pair.target
@@ -30,11 +56,3 @@ class PREDATOR(Model):
             torch.cat((source_overlap, target_overlap), dim=cat_dim),  # overlap_score
             torch.cat((source_saliency, target_saliency), dim=cat_dim),  # saliency_score
         )
-
-    # def forward(self, pair: Pair) -> Pair:
-    #     pair.join()
-    #     pair, skip_connections = self.encoder(pair)
-    #     pair = self.bottleneck(pair)
-    #     (pair, overlap_score, saliency_score) = self.decoder(pair, skip_connections)
-    #     pair.split()
-    #     return pair, overlap_score, saliency_score

@@ -5,6 +5,9 @@ from typing import Any, Callable, Dict
 from torch.utils.data import Dataset
 
 
+foo = "gameroom"
+
+
 class CloudDatasetsI(ABC, Dataset):
     downsample_table: Dict[str, float] = {}
 
@@ -12,9 +15,14 @@ class CloudDatasetsI(ABC, Dataset):
         TRAIN = "train"
         VAL = "val"
         TEST = "test"
-        TOY_TRAIN = "train_toy"
-        TOY_VAL = "val_toy"
-        TOY_TEST = "test_toy"
+
+        TOY_TRAIN = f"train_{foo}"
+        TOY_VAL = f"val_{foo}"
+        TOY_TEST = f"test_{foo}"
+
+        # TOY_TRAIN = "train_hand_picked_offices"
+        # TOY_VAL = "val_hand_picked_offices"
+        # TOY_TEST = "test_hand_picked_offices"
 
     @abstractmethod
     def __len__(self) -> int: ...

@@ -33,7 +33,20 @@ class RunState:
 
     def __init__(self, run_name: str, train: Current = Current(), val: Current = Current()):
         if settings.DISTRIBUTED.RANK == 0:
-            self.tracker = aim.Run(experiment=run_name)
+            self.tracker = aim.Run(
+                experiment=run_name,
+            )
+            if "TOY" in settings.MODEL.MODULE:
+                name = settings.MODEL.MODULE.replace("TOY ", "")
+                self.tracker.add_tag("Toy")
+            self.tracker.add_tag(name)
+            if settings.MODEL.ENCODER.FREEZE:
+                self.tracker.add_tag("Frozen")
+            if settings.MODEL.ENCODER.PRE_TRAINED:
+                self.tracker.add_tag("Pre-trained")
+            if (gr := settings.MODEL.ENCODER.GRID_RES) is not None:
+                self.tracker.add_tag(f"GR{gr}")
+
         self.train = train
         self.val = val
 
