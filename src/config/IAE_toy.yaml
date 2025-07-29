@@ -3,7 +3,7 @@ MODEL:
   PADDING: 0.1
   ENCODER:
     N_HIDDEN_LAYERS: 2
-    GRID_RES: 16
+    GRID_RES: 32
     FREEZE: false
   LATENT_DIM: 128
   DECODER:
@@ -29,16 +29,12 @@ TRAINER:
     TRAIN:
       CENTERZRANDOM:
         BASE_RATIO: 0.5
-      DOWNSAMPLE:
-        N_POINTS: 4096
       NOISE:
         NOISE: 0.005
 
     VAL:
       # CENTERZRANDOM:
       #   BASE_RATIO: 0.5
-      DOWNSAMPLE:
-        N_POINTS: 4096
       # NOISE:
       #   NOISE: 0.005
 

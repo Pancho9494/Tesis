@@ -1,13 +1,18 @@
+from typing import Any, List, Tuple
+
 import torch
-from typing import List, Any, Tuple
 from multimethod import multimethod
-from LIM.data.structures import PCloud, Pair
-from LIM.models.layers import KPConvNeighbors, ResBlock_A, ResBlock_B, Conv1DAdapter, BatchNorm
-from LIM.models.layers.leakyrelu import LeakyReLU
+
+import LIM.log as log
 from config.config import settings
+from LIM.data.structures import Pair, PCloud
+from LIM.models.layers import BatchNorm, Conv1DAdapter, KPConvNeighbors, ResBlock_A, ResBlock_B
+from LIM.models.layers.leakyrelu import LeakyReLU
 
 
 class Encoder(torch.nn.Module):
+    frozen_blocks: tuple[torch.nn.Module, ...]
+
     def __init__(self) -> None:
         super(Encoder, self).__init__()
 
@@ -41,6 +46,28 @@ class Encoder(torch.nn.Module):
                 in_channels=2 ** (8 + N_LAYERS), out_channels=LATENT_DIM, kernel_size=1, bias=True, debug_mode=True
             ),
         )
+
+        self._freeze_weights()
+
+    def _freeze_weights(self) -> None:
+        n_freeze: int = settings.MODEL.ENCODER.FREEZE
+        stage_blocks: List[torch.nn.Module] = [
+            self.enter,
+            *self.inner_layers,
+            self.exit,
+        ]
+
+        if n_freeze <= 0:
+            self.frozen_blocks: tuple[torch.nn.Module, ...] = ()
+            return
+
+        self.frozen_blocks = tuple(stage_blocks[:n_freeze])
+
+        log.info(f"Training {self} with {n_freeze} layers frozen")
+        for block in self.frozen_blocks:
+            block.eval()
+            for p in block.parameters():
+                p.requires_grad_ = False
 
     def __repr__(self) -> str:
         return "Encoder()"

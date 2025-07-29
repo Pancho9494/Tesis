@@ -25,7 +25,7 @@ def handle_OOM(func: Callable) -> Callable:
         try:
             func(*args, **kwargs)
             return True
-        except RuntimeError as e:
+        except (RuntimeError, IndexError) as e:
             log.warn(f"Cuda OOM: {e}")
             return False
 
@@ -327,9 +327,9 @@ class BaseTrainer(ABC):
         _settings: config.Settings
 
         def __init__(self, *args, **kwargs):
-            self._date = None
             assert config.settings is not None
             self._settings = config.settings
+            self._date = self._settings.TRAINER.DATED
 
         def dated(self, date: str | datetime) -> "BaseTrainer.Mode":
             self._date = date if date is datetime else datetime.strptime(str(date), "%Y%m%d_%H%M%S")
@@ -349,7 +349,7 @@ class BaseTrainer(ABC):
 
                     resulting_path = resulting_path / Path(datetime.now().strftime(DATE_FORMAT))
                 case BaseTrainer.Mode.FIXED:
-                    if not self._date is not None:
+                    if self._date is None:
                         msg = "Mode fixed needs value to dir with the YYYYMMDD_HHMMSS format"
                         log.error("Mode fixed needs value to dir with the YYYYMMDD_HHMMSS format")
                         raise ValueError(msg)

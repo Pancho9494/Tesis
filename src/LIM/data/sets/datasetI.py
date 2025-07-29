@@ -2,10 +2,16 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Callable, Dict
 
+from config.config import settings
 from torch.utils.data import Dataset
 
+import LIM.log as log
 
-foo = "gameroom"
+SUBSET = settings.TRAINER.SUBSET
+if SUBSET is not None:
+    log.info(f"Training with {SUBSET} subset")
+else:
+    SUBSET = "toy"
 
 
 class CloudDatasetsI(ABC, Dataset):
@@ -16,9 +22,9 @@ class CloudDatasetsI(ABC, Dataset):
         VAL = "val"
         TEST = "test"
 
-        TOY_TRAIN = f"train_{foo}"
-        TOY_VAL = f"val_{foo}"
-        TOY_TEST = f"test_{foo}"
+        TOY_TRAIN = f"train_{SUBSET}"
+        TOY_VAL = f"val_{SUBSET}"
+        TOY_TEST = f"test_{SUBSET}"
 
         # TOY_TRAIN = "train_hand_picked_offices"
         # TOY_VAL = "val_hand_picked_offices"

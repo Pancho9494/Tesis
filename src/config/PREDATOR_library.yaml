@@ -2,7 +2,7 @@ MODEL:
   MODULE: "TOY PREDATOR"
   ENCODER:
     N_HIDDEN_LAYERS: 2
-    FREEZE: 0
+    FREEZE: false
   LATENT_DIM: 128
   DECODER: {}
 
@@ -10,6 +10,7 @@ DEVICE: "cuda"
 
 TRAINER:
   MODE: "new"
+  SUBSET: "library"
   BATCH_SIZE: 1
   LEARNING_RATE:
     OPTIMIZER: "sgd"

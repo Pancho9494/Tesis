@@ -75,7 +75,7 @@ class Metric(ABC):
         return loss
 
     def __repr__(self) -> str:
-        return f"{self.name} [[cyan]{self.current:5.4f}[/cyan]]"
+        return f"{self.name}[current=[cyan]{self.current:5.4f}[/cyan], average=[cyan]{self.average:5.4f}[/cyan]]"
 
     def get(self, value: str) -> float:
         assert (value := value.lower().strip()) in ["best", "current", "total_sum", "average"]
@@ -158,6 +158,8 @@ class Loss(ABC):
 
         self.train.from_dict(data["train"])
         self.val.from_dict(data["val"])
+
+        log.info(f"Loaded {self} with {self.train=} and {self.val=}")
 
 
 class MultiLoss:

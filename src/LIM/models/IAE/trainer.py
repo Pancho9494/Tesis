@@ -26,6 +26,10 @@ class IAETrainer(BaseTrainer):
         self.average_val_iou, self.best_average_val_iou = 0.0, 0.0
         self.losses.extend([self.l1_loss, self.iou_loss])
 
+        if settings.TRAINER.MODE.value in [BaseTrainer.Mode.FIXED.value, BaseTrainer.Mode.LATEST.value]:
+            for loss in self.losses:
+                loss.load(run=self.BACKUP_DIR, suffix="latest")
+
     def _load_model(self, model: Type[Model]) -> None:
         self.model = IAE(model)
         self.model.to(self.device)

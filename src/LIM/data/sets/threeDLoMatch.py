@@ -97,8 +97,42 @@ class ThreeDLoMatch(CloudDatasetsI):
         log.info("Making toy dataset lists for ThreeDLoMatch")
         instance = cls()
         with open(cls.dir / "train_info.pkl", "rb") as f:
-            info = pickle.load(f)
-        instance = instance.__parse_info(info, [0 if "7-scenes-office" in p else 1 for p in info["src"]])
+            train_info = pickle.load(f)
+        with open(cls.dir / "val_info.pkl", "rb") as f:
+            val_info = pickle.load(f)
+        with open(cls.dir / "3DMatch.pkl", "rb") as f:
+            tdmatch_info = pickle.load(f)
+        with open(cls.dir / "3DLoMatch.pkl", "rb") as f:
+            tdlomatch_info = pickle.load(f)
+
+        info = {
+            "src": [],
+            "tgt": [],
+            "rot": np.empty((0, 3, 3)),
+            "trans": np.empty((0, 3, 1)),
+            "overlap": np.empty((0)),
+        }
+        for d in [train_info, val_info, tdmatch_info, tdlomatch_info]:
+            for key in ["src", "tgt"]:
+                info[key] += d[key]
+            for key in ["rot", "trans", "overlap"]:
+                if isinstance(d[key], list):
+                    d[key] = np.array(d[key])
+                info[key] = np.concatenate((info[key], d[key]))
+        instance = instance.__parse_info(
+            info,
+            [
+                0
+                if (
+                    "sun3d-brown_bm_1-brown_bm_1_1" in p
+                    or "sun3d-brown_bm_1-brown_bm_1_2" in p
+                    or "sun3d-brown_bm_1-brown_bm_1_3" in p
+                    or "sun3d-brown_bm_4-brown_bm_4" in p
+                )
+                else 1
+                for p in info["src"]
+            ],
+        )
 
         arr = np.arange(0, len(instance.src_paths))
         np.random.shuffle(arr)
@@ -120,10 +154,11 @@ class ThreeDLoMatch(CloudDatasetsI):
             for arr_name in ["rot", "trans", "overlap"]:
                 new_infos[f"new_{split}_info"][arr_name] = np.array(getattr(instance, f"{arr_name}_paths"))[indices]
 
+        SUBSET = settings.TRAINER.SUBSET
         for split in ["train", "val", "test"]:
-            with open(instance.dir / f"{split}_toy_info.pkl", "wb") as file:
+            with open(instance.dir / f"{split}_{SUBSET}_info.pkl", "wb") as file:
                 foo = {k: len(v) for k, v in new_infos[f"new_{split}_info"].items()}
-                log.info(f"Writing to {instance.dir / f'{split}_toy_info.pkl'}\ndict with shapes: {foo}")
+                log.info(f"Writing to {instance.dir / f'{split}_{SUBSET}_info.pkl'}\ndict with shapes: {foo}")
                 pickle.dump(new_infos[f"new_{split}_info"], file)
 
     @property
@@ -153,4 +188,5 @@ def collate_3dmatch(batch: List[Pair], split: CloudDatasetsI.SPLITS) -> Pair:
     source_batch.features = source_batch.features.reshape(-1, 1)
     target_batch.points = target_batch.points.reshape(-1, 3)
     target_batch.features = target_batch.features.reshape(-1, 1)
+    # TODO: add random rotation transformation
     return Pair(id=batch[0].id, source=source_batch, target=target_batch, GT_tf_matrix=np.squeeze(GT_tf_batch, axis=0))

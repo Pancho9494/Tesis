@@ -49,7 +49,8 @@ class PredatorTrainer(BaseTrainer):
     @handle_OOM
     def _custom_train_step(self, sample: Pair) -> bool:
         if config.settings.MODEL.ENCODER.FREEZE:
-            self.model.encoder.eval()
+            for block in self.model.encoder.frozen_blocks:
+                block.eval()
         sample.correspondences
         sample, overlaps, saliencies = self.model(sample)
         sample.source.first.pcd = sample.source.first.pcd.transform(sample.GT_tf_matrix)

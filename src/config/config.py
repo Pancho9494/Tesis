@@ -1,11 +1,11 @@
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Self
 
 import msgpack
 import yaml
-from pydantic import Field, computed_field, field_serializer
+from pydantic import Field, computed_field, field_serializer, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -37,7 +37,7 @@ class Model(SerializableSettings):
     class Encoder(SerializableSettings):
         N_HIDDEN_LAYERS: int  # Must be the same in PREDATOR and IAE
         GRID_RES: int | None = None  # IAE
-        FREEZE: bool = False  # IAE
+        FREEZE: int = 0  # IAE
         PRE_TRAINED: bool = False  # PREDATOR
         PRE_TRAIN_DATE: str | None = None  # YYYYMMDD_HHMMSS
 
@@ -61,8 +61,24 @@ class Transforms(SerializableSettings):
         return self.TRAIN
 
     @property
-    def TOY_VAL(self) -> dict[str, dict[str, Any]] | None:
+    def TRAIN_TOY(self) -> dict[str, dict[str, Any]] | None:
         return self.TRAIN
+
+    @property
+    def TRAIN_LIBRARY(self) -> dict[str, dict[str, Any]] | None:
+        return self.TRAIN
+
+    @property
+    def TOY_VAL(self) -> dict[str, dict[str, Any]] | None:
+        return self.VAL
+
+    @property
+    def VAL_TOY(self) -> dict[str, dict[str, Any]] | None:
+        return self.VAL
+
+    @property
+    def VAL_LIBRARY(self) -> dict[str, dict[str, Any]] | None:
+        return self.VAL
 
 
 class AvailableOptimizers(str, Enum):
@@ -80,6 +96,7 @@ class LearningRate(SerializableSettings):
 class AvailableTrainingModes(str, Enum):
     NEW = "new"
     LATEST = "latest"
+    FIXED = "fixed"
 
 
 class DistributedSettings(SerializableSettings):
@@ -112,6 +129,8 @@ class DistributedSettings(SerializableSettings):
 
 class Trainer(SerializableSettings):
     MODE: AvailableTrainingModes
+    DATED: str | None = None  # Optional date to load from YYYYMMDD_HHMMSS
+    SUBSET: str | None = None
     BACKUP_DIR: Path = Path("./src/LIM/training/backups/")
     BATCH_SIZE: int
     LEARNING_RATE: LearningRate
@@ -127,6 +146,14 @@ class Trainer(SerializableSettings):
     @field_serializer("BACKUP_DIR")
     def serialize_backup_dir(self, backup_dir: Path, _info) -> str:
         return str(self.BACKUP_DIR)
+
+    @model_validator(mode="after")
+    def fixed_mode_needs_date(self) -> Self:
+        if self.MODE == AvailableTrainingModes.FIXED and self.DATED is None:
+            raise ValueError("Mode FIXED needs a value for DATED")
+        elif self.MODE != AvailableTrainingModes.FIXED and self.DATED is not None:
+            raise ValueError("DATED is only used for mode FIXED")
+        return self
 
 
 class Tester(SerializableSettings):

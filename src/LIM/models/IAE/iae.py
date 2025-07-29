@@ -1,12 +1,14 @@
-from LIM.models.IAE.implicit_decoder import ImplicitDecoder
-from LIM.data.structures import PCloud
-import torch
-from config.config import settings
-from LIM.models.layers.unet3d import UNet3D
-import torch_scatter
-from LIM.models.modelI import Model
 import inspect
+
+import torch
+import torch_scatter
+
 import LIM.log as log
+from config.config import settings
+from LIM.data.structures import PCloud
+from LIM.models.IAE.implicit_decoder import ImplicitDecoder
+from LIM.models.layers.unet3d import UNet3D
+from LIM.models.modelI import Model
 
 
 class IAE(Model):
@@ -17,10 +19,6 @@ class IAE(Model):
         self.GRID_RESOLUTION = settings.MODEL.ENCODER.GRID_RES
 
         self.encoder = self._fetch_encoder_from_model(model)
-        if settings.MODEL.ENCODER.FREEZE:
-            log.info(f"Training with {self.encoder} weights frozen")
-            for p in self.encoder.parameters():
-                p.requires_grad = False
         self.decoder = ImplicitDecoder(
             latent_dim=self.LATENT_DIM,
             hidden_size=settings.MODEL.DECODER.HIDDEN_SIZE,

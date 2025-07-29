@@ -36,6 +36,8 @@ class RunState:
             self.tracker = aim.Run(
                 experiment=run_name,
             )
+            if settings.TRAINER.SUBSET is not None:
+                self.tracker.add_tag(settings.TRAINER.SUBSET.upper())
             if "TOY" in settings.MODEL.MODULE:
                 name = settings.MODEL.MODULE.replace("TOY ", "")
                 self.tracker.add_tag("Toy")
@@ -77,6 +79,7 @@ class RunState:
 
         self.train = RunState.Current(**data["train"])
         self.val = RunState.Current(**data["val"])
+        log.info(f"Loaded RunState with {self.train=} {self.val=}")
         if settings.DISTRIBUTED.RANK == 0:
             self.tracker = aim.Run(run_hash=data["tracker_hash"])
 

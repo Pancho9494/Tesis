@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 
 import LIM.log as log
-from config.config import settings
+from config.config import settings, AvailableTrainingModes
 from LIM.data.structures.pair import Pair
 from LIM.models.IAE import IAE
 from LIM.models.modelI import Model
@@ -24,7 +24,7 @@ class PREDATOR(Model):
         return f"Predator({self.encoder}, {self.bottleneck}, {self.decoder})"
 
     def _load_pre_training(self) -> None:
-        if not settings.MODEL.ENCODER.PRE_TRAINED:
+        if (not settings.MODEL.ENCODER.PRE_TRAINED) or (settings.TRAINER.MODE != AvailableTrainingModes.NEW):
             return
         run_path = settings.TRAINER.BACKUP_DIR / "IAE" / settings.MODEL.ENCODER.PRE_TRAIN_DATE
         log.info(f"Loading pre_trained weights from: {run_path}")
@@ -33,10 +33,6 @@ class PREDATOR(Model):
 
         self.encoder.load_state_dict(pre_training_IAE.encoder.state_dict())
         log.info("Successfuly loaded encoder weights")
-
-        if settings.MODEL.ENCODER.FREEZE:
-            log.info("Freezing encoder weights")
-            self.encoder.requires_grad_(False)
 
         del pre_training_IAE
         return
