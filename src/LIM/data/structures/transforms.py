@@ -1,7 +1,12 @@
-import torch
-from LIM.data.structures.pcloud import PCloud, Downsampler
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
+import numpy as np
+import scipy
+import torch
+
+from LIM.data.structures.pair import Pair
+from LIM.data.structures.pcloud import Downsampler, PCloud
 
 
 class TF(torch.nn.Module, ABC):
@@ -55,7 +60,7 @@ class CenterZRandom(TF):
         if BATCH_SIZE > 1:
             return input
         points = input.points
-        random_ratio = 0.5 * torch.rand(BATCH_SIZE).to(input.device)
+        random_ratio = self.ratio * torch.rand(BATCH_SIZE).to(input.device)
 
         min_x, _ = torch.min(points[:, :, 0], dim=1)
         max_x, _ = torch.max(points[:, :, 0], dim=1)
@@ -131,14 +136,43 @@ class Noise(TF):
         return input
 
 
+class Rotate(TF):
+    rotation_factor: float
+
+    def __init__(self) -> None:
+        super(Rotate, self).__init__()
+        self.rotation_factor = 1.0
+
+    def __repr__(self) -> str:
+        return "Rotate()"
+
+    def forward(self, input: Pair) -> Pair:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if input.GT_tf_matrix is None:
+            return input
+        euler_zyx = np.random.rand(3) * np.pi * 2 / self.rotation_factor
+        tf_matrix = np.eye(4)
+        tf_matrix[:3, :3] = scipy.spatial.transform.Rotation.from_euler("zyx", euler_zyx).as_matrix()
+
+        if np.random.rand(1)[0] > 0.5:
+            input.source.pcd.transform(tf_matrix)
+            tf_matrix_inv = np.eye(4)
+            tf_matrix_inv[:3, :3] = tf_matrix[:3, :3].T
+            input.GT_tf_matrix = input.GT_tf_matrix @ tf_matrix_inv
+        else:
+            input.target.pcd.transform(tf_matrix)
+            input.GT_tf_matrix = tf_matrix @ input.GT_tf_matrix
+        return input
+
+
 def transform_factory(inputs: Dict[str, Dict[str, Any]]) -> List[torch.nn.Module]:
     if not inputs:
         return []
-    mappings: Dict[str, TF] = {
+    mappings: Dict[str, Any] = {
         "CENTERZRANDOM": CenterZRandom,
         "DOWNSAMPLE": Downsample,
         "NOISE": Noise,
         "BREAKSYMMETRY": BreakSymmetry,
+        "ROTATE": Rotate,
     }
 
     out = []

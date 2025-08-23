@@ -1,10 +1,12 @@
-from typing import Callable, Optional, List
 import inspect
-import torch
-from itertools import count
 import sys
 import time
 from dataclasses import dataclass, field
+from functools import wraps
+from itertools import count
+from typing import Callable, Iterable, List, Optional
+
+import torch
 
 DEBUG = False
 
@@ -91,3 +93,42 @@ def identify_method(after_msg: Optional[str] = None, on: bool = DEBUG):
         return identify
 
     return decorator
+
+
+def only_kwargs(arg: Callable | Iterable[str] | None = None, /, *, expected_args: Iterable[str] | None = None):
+    """
+    Decorator that rejects positional args (beyond `self`).
+    - Use as `@only_kwargs` (no validation)
+    - Or     `@only_kwargs(["R","center","idx"])`  (list as first arg)
+    - Or     `@only_kwargs(expected_args=["R","center"])` (kw form)
+
+    If `expected_args` is provided, it will also error on unexpected kwargs.
+    """
+    # Normalize the two calling styles
+    if callable(arg):
+        func = arg
+        exp = None
+    else:
+        func = None
+        exp = set(arg) if arg is not None else (set(expected_args) if expected_args is not None else None)
+
+    def decorator(f: Callable):
+        @wraps(f)
+        def wrapper(self, *args, **kwargs):
+            if args:
+                msg = f"{self.__class__.__name__}.{f.__name__} only accepts keyword arguments" + (
+                    f"; allowed keys: {sorted(exp)}" if exp is not None else ""
+                )
+                raise ValueError(msg)
+            if exp is not None:
+                extra = set(kwargs) - exp
+                if extra:
+                    raise TypeError(
+                        f"Unexpected keyword(s) for {self.__class__.__name__}.{f.__name__}: "
+                        f"{sorted(extra)}. Allowed: {sorted(exp)}"
+                    )
+            return f(self, **kwargs)
+
+        return wrapper
+
+    return decorator if func is None else decorator(func)

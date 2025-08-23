@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Dict, List
 
 import numpy as np
+import polars as pl
 import torchvision
 
 import LIM.log as log
@@ -77,11 +78,22 @@ class ThreeDLoMatch(CloudDatasetsI):
         self.overlap_paths = [o for o, skip in zip(info["overlap"], skip_indices) if not skip]
         return self
 
+    def overlap_distribution(self) -> pl.DataFrame:
+        foo = pl.DataFrame({"overlaps": (np.round(np.array(self.overlap_paths) * 100, 0).astype(np.int64))})
+        foo = foo.select(pl.col("overlaps").value_counts())
+        foo = foo.unnest("overlaps").sort(by="overlaps")
+        foo.write_csv(f"{settings.TRAINER.SUBSET}_overlap_count.csv")
+        return foo
+
     @classmethod
     def new_instance(cls, split: CloudDatasetsI.SPLITS) -> ThreeDLoMatch:
+        assert settings is not None
         instance = cls()
         instance.split = split
-        info_path = cls.dir / f"{split.value}_info.pkl"
+        if settings.TRAINER.SUBSET is not None:
+            info_path = cls.dir / f"{split.value}_{settings.TRAINER.SUBSET}_info.pkl"
+        else:
+            info_path = cls.dir / f"{split.value}_info.pkl"
         log.info(f"ThreeDLoMatch loading {info_path}")
         with open(info_path, "rb") as f:
             info = pickle.load(f)
