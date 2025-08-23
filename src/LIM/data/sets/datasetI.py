@@ -7,11 +7,12 @@ from torch.utils.data import Dataset
 
 import LIM.log as log
 
-SUBSET = settings.TRAINER.SUBSET
-if SUBSET is not None:
-    log.info(f"Training with {SUBSET} subset")
+if settings.TRAINER.SUBSET is not None:
+    SUBSET = settings.TRAINER.SUBSET
 else:
-    SUBSET = "toy"
+    SUBSET = "no"
+
+log.info(f"Training with {SUBSET} subset")
 
 
 class CloudDatasetsI(ABC, Dataset):

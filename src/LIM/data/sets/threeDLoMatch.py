@@ -58,7 +58,7 @@ class ThreeDLoMatch(CloudDatasetsI):
             target=target,
             GT_tf_matrix=ground_truth,
         )
-        pair.overlap = overlap
+        pair._overlap = overlap
         pair.correspondences
         return pair
 
@@ -81,7 +81,10 @@ class ThreeDLoMatch(CloudDatasetsI):
     def new_instance(cls, split: CloudDatasetsI.SPLITS) -> ThreeDLoMatch:
         instance = cls()
         instance.split = split
-        info_path = cls.dir / f"{split.value}_info.pkl"
+        if settings.TRAINER.SUBSET is not None:
+            info_path = cls.dir / f"{split.value}_{settings.TRAINER.SUBSET}_info.pkl"
+        else:
+            info_path = cls.dir / f"{split.value}_info.pkl"
         log.info(f"ThreeDLoMatch loading {info_path}")
         with open(info_path, "rb") as f:
             info = pickle.load(f)
@@ -189,4 +192,11 @@ def collate_3dmatch(batch: List[Pair], split: CloudDatasetsI.SPLITS) -> Pair:
     target_batch.points = target_batch.points.reshape(-1, 3)
     target_batch.features = target_batch.features.reshape(-1, 1)
     # TODO: add random rotation transformation
-    return Pair(id=batch[0].id, source=source_batch, target=target_batch, GT_tf_matrix=np.squeeze(GT_tf_batch, axis=0))
+    out = Pair(
+        id=batch[0].id,
+        source=source_batch,
+        target=target_batch,
+        GT_tf_matrix=np.squeeze(GT_tf_batch, axis=0),
+    )
+    out._overlap = batch[0]._overlap
+    return out

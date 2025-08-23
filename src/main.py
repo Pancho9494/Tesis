@@ -53,7 +53,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "config_file",
         help="Path to the configuration file",
-        default="foo",
     )
     args = parser.parse_args()
     config.settings = config.Settings.from_yaml(args.config_file)

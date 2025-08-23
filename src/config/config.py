@@ -55,6 +55,7 @@ class Model(SerializableSettings):
 class Transforms(SerializableSettings):
     TRAIN: dict[str, dict[str, Any]] | None = Field(default_factory=dict)
     VAL: dict[str, dict[str, Any]] | None = Field(default_factory=dict)
+    TEST: dict[str, dict[str, Any]] | None = Field(default_factory=dict)
 
     @property
     def TOY_TRAIN(self) -> dict[str, dict[str, Any]] | None:

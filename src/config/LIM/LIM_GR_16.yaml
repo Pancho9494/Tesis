@@ -1,16 +1,22 @@
 MODEL:
   MODULE: "TOY PREDATOR"
+  PADDING: 0.1
   ENCODER:
     N_HIDDEN_LAYERS: 2
-    FREEZE: false
+    GRID_RES: 16
+    FREEZE: 0
+    PRE_TRAINED: true
+    PRE_TRAIN_DATE: "20250722_231227"
   LATENT_DIM: 128
-  DECODER: {}
+  DECODER:
+    HIDDEN_SIZE: 32
+    N_BLOCKS: 3
 
 DEVICE: "cuda"
 
 TRAINER:
   MODE: "new"
-  SUBSET: "library"
+  SUBSET: "apartment"
   BATCH_SIZE: 1
   LEARNING_RATE:
     OPTIMIZER: "sgd"

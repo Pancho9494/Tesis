@@ -205,6 +205,10 @@ class PCloud:
         self._features = value.to(self.device)
 
     # =========================================== METHODS ===========================================#
+    def transform(self, tf_matrix: np.ndarray) -> Self:
+        self.pcd = self.pcd.transform(tf_matrix)
+        return self
+
     def show(self) -> None:
         WIDTH, HEIGHT = 3840, 2160
         ROTATE_X, ROTATE_Y = 0.0, 0.0
@@ -461,25 +465,29 @@ class Downsampler:
         self.size = size
         self.mode = mode
 
-    def __call__(self, cloud: PCloud, *args, **kwargs) -> PCloud:
+    def __call__(self, cloud: PCloud, *args, **kwargs) -> tuple[PCloud, torch.Tensor]:
         temp_cloud = cloud
         match temp_cloud.points.shape:
-            case (_BATCH_SIZE, NUM_POINTS, _N_DIM):
+            case (BATCH_SIZE, NUM_POINTS, _N_DIM):
                 if NUM_POINTS < self.size:
+                    # return temp_cloud, torch.arange(NUM_POINTS, device=cloud.device).expand(BATCH_SIZE, -1)
                     return temp_cloud
                 temp_cloud = self._downsample_batch(temp_cloud, *args, **kwargs)
 
             case (NUM_POINTS, _N_DIM):
                 if NUM_POINTS < self.size:
+                    #  return temp_cloud, torch.arange(NUM_POINTS, device=cloud.device)
                     return temp_cloud
+
                 temp_cloud.unsqueeze()
-                temp_cloud = self._downsample_batch(temp_cloud, *args, **kwargs)
+                temp_cloud, indices = self._downsample_batch(temp_cloud, *args, **kwargs)
                 temp_cloud.squeeze()
             case _:
                 raise ValueError(f"Expected input tensor to have 2 or 3 dimensions, but got {temp_cloud.points.shape}")
+        # return temp_cloud, indices.squeeze(0)
         return temp_cloud
 
-    def _downsample_batch(self, cloud: PCloud, *args, **kwargs) -> PCloud:
+    def _downsample_batch(self, cloud: PCloud, *args, **kwargs) -> tuple[PCloud, torch.Tensor]:
         BATCH_SIZE, NUM_POINTS, N_DIM = cloud.points.shape
         indices: torch.Tensor = getattr(self, self.mode)(self.size, cloud, *args, **kwargs)
         cloud.points = torch.gather(cloud.points, dim=1, index=indices.unsqueeze(-1).expand(-1, -1, N_DIM))
@@ -495,6 +503,7 @@ class Downsampler:
         except (KeyError, IndexError):
             pass
 
+        # return cloud, indices
         return cloud
 
     def _random_indices(self, size: int, cloud: PCloud) -> torch.Tensor:

@@ -38,8 +38,9 @@ class RunState:
             )
             if settings.TRAINER.SUBSET is not None:
                 self.tracker.add_tag(settings.TRAINER.SUBSET.upper())
+            name = settings.MODEL.MODULE
             if "TOY" in settings.MODEL.MODULE:
-                name = settings.MODEL.MODULE.replace("TOY ", "")
+                name = name.replace("TOY ", "")
                 self.tracker.add_tag("Toy")
             self.tracker.add_tag(name)
             if settings.MODEL.ENCODER.FREEZE:

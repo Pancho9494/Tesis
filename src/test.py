@@ -147,7 +147,6 @@ def exp_extrapolate(df: pl.DataFrame) -> pl.DataFrame:
     Fits y = a*exp(-b*x) + c for each metric (>=3 points required), and
     linearly extrapolates `step` as before.
     """
-    # 1) one row per epoch
     df_epoch = df.group_by("epoch").agg(pl.all().last()).sort("epoch")
     orig = df_epoch["epoch"].to_numpy()
     if orig.size == 0 or orig.max() >= MIN_EPOCHS:
@@ -156,21 +155,17 @@ def exp_extrapolate(df: pl.DataFrame) -> pl.DataFrame:
         log.warn(f"Only {orig.size} epochs; skipping expo extrapolation")
         return df
 
-    # 2) define model
     def neg_exp(x, a, b, c):
         return a * np.exp(-b * x) + c
 
-    # 3) fit step linearly
     step_coeff = np.polyfit(orig, df_epoch["step"].to_numpy(), deg=1)
 
-    # 4) prepare new epochs
     new_epochs = np.arange(orig.max() + 1, MIN_EPOCHS + 1, dtype=int)
     new_data = {
         "epoch": new_epochs,
         "step": np.polyval(step_coeff, new_epochs).round().astype(int).tolist(),
     }
 
-    # 5) for each metric, fit and extrapolate
     metric_cols = [c for c in df_epoch.columns if c not in ("epoch", "step")]
     for col in metric_cols:
         y = df_epoch[col].to_numpy()
@@ -187,9 +182,8 @@ def exp_extrapolate(df: pl.DataFrame) -> pl.DataFrame:
             log.warn(f"Expo fit failed for {col}, using initial guess: {e}")
             popt = p0
 
-        new_data[col] = (neg_exp(new_epochs, *popt) - 0.6439837142340359).tolist()
+        new_data[col] = (neg_exp(new_epochs, *popt)).tolist()
 
-    # 6) append and return
     return df.vstack(pl.DataFrame(new_data).select(df.columns))
 
 
@@ -230,8 +224,10 @@ if __name__ == "__main__":
 
     log.info(f"{train_df=}")
     log.info(f"{val_df=}")
-    train_df = log_extrapolate(train_df)
-    val_df = log_extrapolate(val_df)
+
+    if False:
+        train_df = log_extrapolate(train_df)
+        val_df = log_extrapolate(val_df)
 
     train_df = train_df[::TRAIN_TICKS_DISTANCE]
     val_df = val_df[::VAL_TICKS_DISTANCE]

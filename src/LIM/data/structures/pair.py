@@ -6,7 +6,7 @@ from typing import Optional, Iterable, Tuple, Any
 
 from config.config import settings
 from LIM.data.structures.pcloud import PCloud, Painter
-
+import LIM.log as log
 import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
 import os
@@ -244,7 +244,7 @@ class Pair:
 
     def show(self, predicted_tf: np.ndarray | None = None) -> None:
         WIDTH, HEIGHT = 1280, 720
-        ROTATE_X, ROTATE_Y = 1.0, 0.0
+        ROTATE_X, ROTATE_Y = 0.0, 0.0
         YELLOW, BLUE = np.array([1.0, 0.706, 0.0]), np.array([0.0, 0.651, 0.929])
         WHITE = np.array([1, 1, 1])
 
@@ -254,18 +254,26 @@ class Pair:
         gt_src_pcd = copy.deepcopy(src_pcd).pcd.transform(self.GT_tf_matrix)
 
         vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name="raw", width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
+        vis.create_window(window_name=f"[{self._overlap:2.2f}] raw", width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
         vis.add_geometry(src_pcd.pcd)
         vis.add_geometry(tgt_pcd.pcd)
 
         vis2 = o3d.visualization.Visualizer()
-        vis2.create_window(window_name="ground truth", width=WIDTH, height=HEIGHT, left=WIDTH, top=HEIGHT)
+        vis2.create_window(
+            window_name=f"[{self._overlap:2.2f}] ground truth", width=WIDTH, height=HEIGHT, left=WIDTH, top=HEIGHT
+        )
         vis2.add_geometry(gt_src_pcd)
         vis2.add_geometry(tgt_pcd.pcd)
 
         if predicted_tf is not None:
             vis3 = o3d.visualization.Visualizer()
-            vis3.create_window(window_name="predicted", width=WIDTH, height=HEIGHT, left=WIDTH, top=int(HEIGHT * 1.7))
+            vis3.create_window(
+                window_name=f"[{self._overlap:2.2f}] predicted",
+                width=WIDTH,
+                height=HEIGHT,
+                left=WIDTH,
+                top=int(HEIGHT * 1.7),
+            )
             pred_src_pcd = copy.deepcopy(src_pcd.pcd)
             pred_src_pcd.transform(predicted_tf)
             vis3.add_geometry(pred_src_pcd)
