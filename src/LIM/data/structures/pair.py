@@ -1,15 +1,17 @@
 import copy
+import os
+from typing import Any, Iterable, Optional, Tuple
+
 import numpy as np
 import open3d as o3d
 import torch
-from typing import Optional, Iterable, Tuple, Any
+from open3d.geometry import Geometry
+from open3d.visualization import ViewControl, Visualizer
 
-from config.config import settings
-from LIM.data.structures.pcloud import PCloud, Painter
-import LIM.log as log
 import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
 import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
-import os
+from config.config import settings
+from LIM.data.structures.pcloud import Painter, PCloud
 
 os.environ["XDG_SESSION_TYPE"] = "x11"
 
@@ -57,8 +59,9 @@ class Pair:
         self.id = id
         self.source = source
         self.target = target
-        if GT_tf_matrix is not None:
-            self.GT_tf_matrix = GT_tf_matrix
+        self.GT_tf_matrix = GT_tf_matrix
+        if GT_tf_matrix is None:
+            self.GT_tf_matrix = np.eye(4, 4)
 
     def __repr__(self) -> str:
         out = f"Pair(source={self.source}, target={self.target}"
@@ -244,69 +247,44 @@ class Pair:
 
     def show(self, predicted_tf: np.ndarray | None = None) -> None:
         WIDTH, HEIGHT = 1280, 720
-        ROTATE_X, ROTATE_Y = 0.0, 0.0
-        YELLOW, BLUE = np.array([1.0, 0.706, 0.0]), np.array([0.0, 0.651, 0.929])
-        WHITE = np.array([1, 1, 1])
-
-        src_pcd = Painter.Uniform(YELLOW, compute_normals=True)(self.source)
-        tgt_pcd = Painter.Uniform(BLUE, compute_normals=True)(self.target)
-
-        gt_src_pcd = copy.deepcopy(src_pcd).pcd.transform(self.GT_tf_matrix)
-
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name=f"[{self._overlap:2.2f}] raw", width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
-        vis.add_geometry(src_pcd.pcd)
-        vis.add_geometry(tgt_pcd.pcd)
+        YELLOW = np.array([1.0, 0.706, 0.0])  # noqa: F841
+        BLUE = np.array([0.0, 0.651, 0.929])
+        BLACK = np.array([0, 0, 0])
 
         vis2 = o3d.visualization.Visualizer()
-        vis2.create_window(
-            window_name=f"[{self._overlap:2.2f}] ground truth", width=WIDTH, height=HEIGHT, left=WIDTH, top=HEIGHT
-        )
+        vis2.create_window(window_name="ground truth", width=WIDTH, height=HEIGHT, left=WIDTH, top=HEIGHT)
         vis2.add_geometry(gt_src_pcd)
         vis2.add_geometry(tgt_pcd.pcd)
 
+        gt_src_pcd = copy.deepcopy(src_pcd).pcd.transform(self.GT_tf_matrix)
+        pred_src_pcd = None
         if predicted_tf is not None:
-            vis3 = o3d.visualization.Visualizer()
-            vis3.create_window(
-                window_name=f"[{self._overlap:2.2f}] predicted",
-                width=WIDTH,
-                height=HEIGHT,
-                left=WIDTH,
-                top=int(HEIGHT * 1.7),
-            )
             pred_src_pcd = copy.deepcopy(src_pcd.pcd)
             pred_src_pcd.transform(predicted_tf)
-            vis3.add_geometry(pred_src_pcd)
-            vis3.add_geometry(tgt_pcd.pcd)
 
-        while True:
-            vis.update_geometry(src_pcd.pcd)
-            vis.update_geometry(tgt_pcd.pcd)
-            if not vis.poll_events():
-                break
-            ctr = vis.get_view_control()
-            ctr.rotate(ROTATE_X, ROTATE_Y)
-            vis.update_renderer()
+        vis1, ctrl1 = self._make_visualizer("Raw", WIDTH, HEIGHT, 0, HEIGHT + 200, BLACK)
+        _: list[bool] = [vis1.add_geometry(g) for g in [src_pcd.pcd, tgt_pcd.pcd]]
+        vis2, ctrl2 = self._make_visualizer(f"[{src_pcd.path}] ground truth", WIDTH, HEIGHT, WIDTH, HEIGHT + 200, BLACK)
+        _: list[bool] = [vis2.add_geometry(g) for g in [gt_src_pcd, tgt_pcd.pcd]]
 
-            vis2.update_geometry(gt_src_pcd)
-            vis2.update_geometry(tgt_pcd.pcd)
-            if not vis2.poll_events():
-                break
-            ctr = vis2.get_view_control()
-            ctr.rotate(ROTATE_X, ROTATE_Y)
-            vis2.update_renderer()
+        vis3 = None
+        if pred_src_pcd is not None:
+            vis3, ctrl3 = self._make_visualizer(
+                f"[{src_pcd.path}] predicted", WIDTH, HEIGHT, WIDTH / 2, HEIGHT - 600, BLACK
+            )
+            _: list[bool] = [vis3.add_geometry(g) for g in [pred_src_pcd, tgt_pcd.pcd]]
 
-            if predicted_tf is not None:
-                vis3.update_geometry(pred_src_pcd)
-                vis3.update_geometry(tgt_pcd.pcd)
-                if not vis3.poll_events():
-                    break
-                ctr = vis3.get_view_control()
-                ctr.rotate(ROTATE_X, ROTATE_Y)
-                vis3.update_renderer()
+        ctrl2.set_zoom(0.8)
+        ctrl2.rotate(0, 200)
 
-        vis.destroy_window()
-        vis2.destroy_window()
+        keep_rendering: bool = True
+        while keep_rendering:
+            for vis, geometries in zip((vis1, vis2), ([src_pcd.pcd, tgt_pcd.pcd], [gt_src_pcd, tgt_pcd.pcd])):
+                keep_rendering = self._update_visualizer(vis, geometries)
+            if vis3 is not None:
+                keep_rendering = self._update_visualizer(vis3, [pred_src_pcd, tgt_pcd.pcd])
 
-        if predicted_tf is not None:
+        for vis in [vis1, vis2]:
+            vis.destroy_window()
+        if vis3 is not None:
             vis3.destroy_window()

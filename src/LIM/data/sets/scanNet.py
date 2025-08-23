@@ -49,7 +49,7 @@ class ScanNet(CloudDatasetsI):
     """
 
     dir: Path = Path("./src/LIM/data/raw/scannet-clean")
-    paths: List[Path]
+    scenes: List[Path]
     split: CloudDatasetsI.SPLITS | None = None
     _cached_len: int | None = None
 

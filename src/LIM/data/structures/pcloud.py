@@ -1,17 +1,22 @@
 from __future__ import annotations
+
+from enum import Enum
+from pathlib import Path
+from typing import List, Tuple, Union
+
+import matplotlib as mpl
 import numpy as np
 import open3d as o3d
-from pathlib import Path
-from typing import Union, List, Tuple
 import torch
-import matplotlib as mpl
-from enum import Enum
+
+import LIM.log as log
 from config.config import settings
 
 try:
+    import frnn
+
     import LIM.cpp.neighbors.radius_neighbors as cpp_neighbors
     import LIM.cpp.subsampling.grid_subsampling as cpp_subsampling
-    import frnn
 except ModuleNotFoundError:
     print("Unable to load cpp and frnn")
 
@@ -101,7 +106,7 @@ class PCloud:
         elif path.suffix.lower() in [".pth"]:
             instance = cls.from_arr(torch.load(path, weights_only=False))
         else:
-            instance.pcd = cls(pcd=o3d.t.geometry.PointCloud())
+            instance = cls()
             instance.pcd = o3d.io.read_point_cloud(str(path))
 
         instance.path = path
@@ -164,10 +169,14 @@ class PCloud:
 
     @property
     def arr(self) -> np.ndarray:
+        if isinstance(self.pcd, o3d.cpu.pybind.geometry.PointCloud):
+            return np.asarray(self.pcd.points)
         return self.pcd.point.positions.cpu().contiguous().numpy().astype(np.float64)
 
     @property
     def points(self) -> torch.Tensor:
+        if isinstance(self.pcd, o3d.cpu.pybind.geometry.PointCloud):
+            return torch.from_numpy(self.arr)
         return torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(self.device)
 
     @property
@@ -212,14 +221,25 @@ class PCloud:
     def show(self) -> None:
         WIDTH, HEIGHT = 3840, 2160
         ROTATE_X, ROTATE_Y = 0.0, 0.0
+        BLACK = np.array([0, 0, 0])
+        WHITE = np.array([1.0, 1.0, 1.0])
+        YELLOW = np.array([1.0, 0.706, 0.0])
         BLUE = np.array([0.0, 0.651, 0.929])
 
-        pcd = Painter.Uniform(BLUE, compute_normals=True)(self).pcd
+        if paint:
+            pcd = Painter.Uniform(YELLOW, compute_normals)(
+                self, to_legacy=False if isinstance(self.pcd, o3d.cpu.pybind.geometry.PointCloud) else True
+            ).pcd
+        else:
+            pcd = self.pcd
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name=str(self.path), width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
-        vis.get_render_option().background_color = [0, 0, 0]
-        vis.add_geometry(pcd)
+        vis.get_render_option().background_color = WHITE
 
+        log.info(f"{pcd=}, {vis=}")
+        vis.add_geometry(pcd)
+        ctr = vis.get_view_control()
+        ctr.set_zoom(1.2)
         while True:
             vis.update_geometry(pcd)
             if not vis.poll_events():
@@ -359,7 +379,7 @@ class PCloud:
             current._super.path = current.path
 
         current._super._sub = self
-        current._super.features = current.features.detach().clone().to(current.device)
+        current._sunper.features = current.features.detach().clone().to(current.device)
 
 
 def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> None:
@@ -414,7 +434,6 @@ def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> Non
             return_nn=False,
         )
         current.upsamples = up_indices[0].to(torch.int64)
-
         current._super = PCloud.from_tensor(subsampled)
         current._super.path = current.path
     else:
@@ -436,18 +455,29 @@ def collate_cloud(batch: List["PCloud"]) -> "PCloud":
 
     cloud.path = [b.path for b in batch]
     try:  # Possibly empty tensors
-        cloud.pcd.point.colors = o3d.core.Tensor(
-            np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
-            o3d.core.Dtype.Float32,
-            # o3d.core.Device(cls.o3ddevice),
-        )
-        cloud.pcd.point.normals = o3d.core.Tensor(
-            np.concatenate([np.asarray(b.pcd.point.normals) for b in batch]),
-            o3d.core.Dtype.Float32,
-            # o3d.core.Device(cls.o3ddevice),
-        )
-
-    except KeyError:
+        if isinstance(cloud.pcd, o3d.cpu.pybind.geometry.PointCloud):
+            cloud.pcd.colors = o3d.utility.Vector3dVector(
+                np.concatenate(
+                    [np.asarray(b.pcd.colors) for b in batch],
+                )
+            )
+            cloud.pcd.normals = o3d.utility.Vector3dVector(
+                np.concatenate(
+                    [np.asarray(b.pcd.normals) for b in batch],
+                )
+            )
+        else:
+            cloud.pcd.point.colors = o3d.core.Tensor(
+                np.concatenate([np.asarray(b.pcd.point.colors) for b in batch]),
+                o3d.core.Dtype.Float32,
+                # o3d.core.Device(cls.o3ddevice),
+            )
+            cloud.pcd.point.normals = o3d.core.Tensor(
+                np.concatenate([np.asarray(b.pcd.point.normals) for b in batch]),
+                o3d.core.Dtype.Float32,
+                # o3d.icore.Device(cls.o3ddevice),
+            )
+    except (KeyError, AttributeError):
         pass
 
     return cloud
@@ -457,6 +487,7 @@ class Downsampler:
     class Mode(str, Enum):
         RANDOM = "_random_indices"
         PROBABILISTIC = "_probabilistic"
+        INDICES = "_indices"
 
     mode: Mode
     size: int
@@ -520,6 +551,9 @@ class Downsampler:
 
         return torch.from_numpy(choice).unsqueeze(0).to(cloud.device)
 
+    def _indices(self, size: int, cloud: PCloud, indices: torch.Tensor) -> torch.Tensor:
+        return indices.unsqueeze(0).to(torch.int64)
+
 
 class Painter:
     class Cmap:
@@ -536,29 +570,33 @@ class Painter:
             match value:
                 case np.ndarray():
                     self.value = value
-                case torch.tensor():
+                case torch.Tensor():
                     self.value = value.cpu().numpy()
                 case list():
                     self.value = np.array(value)
                 case _:
                     raise ValueError(
-                        "Painter.Uniform's value accepts one of [np.ndarray, torch.tensor, List[float]],"
+                        "Painter.Cmap's value accepts one of [np.ndarray, torch.tensor, List[float]],"
                         + f"but got {type(value)}"
                     )
+
             match cmap:
                 case str():
                     self.cmap = mpl.colormaps[cmap]
                 case mpl.colors.colormap():
                     self.cmap = cmap
                 case _:
-                    raise ValueError(f"Painter.Uniform's cmap accepts str or mpl.colors.Colormap, but got {type(cmap)}")
+                    raise ValueError(f"Painter.Cmap's cmap accepts str or mpl.colors.Colormap, but got {type(cmap)}")
 
             self.compute_normals = compute_normals
 
-        def __call__(self, cloud: PCloud) -> PCloud:
-            cloud.pcd.point.colors = o3d.core.Tensor(
-                self.cmap(self.value)[:, :3], o3d.core.float32, o3d.core.Device(cloud.o3ddevice)
-            )
+        def __call__(self, cloud: PCloud, to_legacy: bool = True) -> PCloud:
+            if to_legacy:
+                cloud.pcd = cloud.pcd.to_legacy()
+            # cloud.pcd.colors = o3d.core.Tensor(
+            #    np.squeeze(self.cmap(self.value), axis=1)[:, :3], o3d.core.float32, o3d.core.Device(cloud.o3ddevice)
+            # )
+            cloud.pcd.colors = o3d.utility.Vector3dVector(np.squeeze(self.cmap(self.value), axis=1)[:, :3])
             if self.compute_normals:
                 cloud = cloud.pcd.estimate_normals()
             return cloud
@@ -575,7 +613,9 @@ class Painter:
                     assert value.shape[-1] == 3, "Array must contain three values: [R, G, B]"
                     value = np.array(value)
                 case _:
-                    raise ValueError(f"Painter.Cmap's value only accepts lists or numpy arrays, but got {type(value)}")
+                    raise ValueError(
+                        f"Painter.Uniform's value only accepts lists or numpy arrays, but got {type(value)}"
+                    )
 
             self.value = value / 255 if np.any(value > 1) else value
             self.compute_normals = compute_normals
