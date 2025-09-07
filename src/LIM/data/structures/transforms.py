@@ -119,6 +119,7 @@ class Downsample(TF):
         input.features = torch.stack(features, dim=0)
 
         return Downsampler(size=self.n_points, mode=Downsampler.Mode.RANDOM)(input)
+        # return Downsampler(size=self.n_points, mode=Downsampler.Mode.VOXEL)(input, voxel_size=0.01)
 
 
 class Noise(TF):

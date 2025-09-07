@@ -6,11 +6,11 @@ import open3d.pipelines.registration as o3d_reg
 import polars as pl
 import torch
 
-import LIM.log as log
 from config.config import settings
 from LIM.data.sets.datasetI import CloudDatasetsI
 from LIM.data.structures.pair import Correspondences, Pair
 from LIM.data.structures.pcloud import Downsampler, PCloud
+from LIM.log import log
 from LIM.models.modelI import Model
 
 
@@ -48,7 +48,7 @@ class RANSAC:
             ],
             criteria=o3d_reg.RANSACConvergenceCriteria(max_iteration=self.MAX_ITERATIONS),
         )
-        return result.transformation
+        return result
 
 
 class InlierRatio:

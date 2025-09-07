@@ -106,7 +106,7 @@ class DistributedSettings(SerializableSettings):
 
     BACKEND: str = "nccl"
     MASTER_ADDR: str = "localhost"
-    MASETR_PORT: int = 12355
+    MASTER_PORT: int = 12355
 
     @computed_field
     @property

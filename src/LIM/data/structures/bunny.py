@@ -13,8 +13,8 @@ from typing import Any
 import numpy as np
 import open3d as o3d
 
-import LIM.log as log
 from LIM.data.structures import PCloud
+from LIM.log import log
 
 os.environ["XDG_SESSION_TYPE"] = "x11"
 
@@ -75,9 +75,15 @@ class Bunny:
         tar_path.unlink()
 
     def _new_bunny(self, applied_T: np.ndarray) -> Bunny:
-        out_bunny = deepcopy(self)
-        out_bunny.cloud.pcd = out_bunny.cloud.pcd.transform(applied_T)
-        out_bunny.T = applied_T @ self.T
+        out_bunny = Bunny(seed=self._seed)
+        out_bunny.T = deepcopy(self.T)
+        if not isinstance(self.cloud.pcd, o3d.cuda.pybind.geometry.PointCloud):
+            pcd_copy = deepcopy(self.cloud.pcd.clone())
+        else:
+            pcd_copy = o3d.geometry.PointCloud(deepcopy(self.cloud.pcd))
+        pcd_copy.transform(applied_T)
+        out_bunny.cloud.pcd = pcd_copy
+        out_bunny.T = applied_T @ out_bunny.T
         return out_bunny
 
     def rotate(
@@ -133,9 +139,16 @@ class Bunny:
             t: (dx, dy, dz). If None, a random translation is sampled.
             frac_of_bbox: Max fraction (per axis) of the bbox extent for random t.
         """
+
+        def _cast_to_np3(value: Any) -> np.ndarray:
+            try:
+                return value.cpu().numpy().astype(np.float64)
+            except AttributeError:
+                return np.asarray(value, dtype=np.float64)
+
         if t is None:
-            minb = np.asarray(self.cloud.pcd.get_min_bound())
-            maxb = np.asarray(self.cloud.pcd.get_max_bound())
+            minb = _cast_to_np3(self.cloud.pcd.get_min_bound())
+            maxb = _cast_to_np3(self.cloud.pcd.get_max_bound())
             extent = maxb - minb
             t = (self._rng(idx, tag="translate").random(3) * 2.0 - 1.0) * (frac_of_bbox * extent)
         t = np.asarray(t, dtype=np.float64).reshape(3)
@@ -169,7 +182,7 @@ class Bunny:
         else:
             ax = int(axis)
 
-        points = np.asarray(self.cloud.points)
+        points = np.asarray(self.cloud.points.cpu())
         axis_points = points[:, ax]
 
         q_low = np.quantile(axis_points, 0.5 - overlap / 2.0)
@@ -188,7 +201,8 @@ class Bunny:
                 points[mask_T].copy(),
             )
         )
-        self.cloud.pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[mask_S].copy()))
+        self.cloud = PCloud()
+        self.cloud.pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(deepcopy(points)[mask_S]))
         return out_bunny
 
     def noise(

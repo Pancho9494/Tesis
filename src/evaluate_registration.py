@@ -4,7 +4,7 @@ import builtins
 from rich import pretty, print, traceback
 
 import config.config as config
-import LIM.log as log
+from LIM.log import log
 
 traceback.install(show_locals=False)
 pretty.install()

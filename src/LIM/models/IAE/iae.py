@@ -3,9 +3,9 @@ import inspect
 import torch
 import torch_scatter
 
-import LIM.log as log
 from config.config import settings
 from LIM.data.structures import PCloud
+from LIM.log import log
 from LIM.models.IAE.implicit_decoder import ImplicitDecoder
 from LIM.models.layers.unet3d import UNet3D
 from LIM.models.modelI import Model

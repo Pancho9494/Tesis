@@ -3,9 +3,9 @@ from typing import Any, List, Tuple
 import torch
 from multimethod import multimethod
 
-import LIM.log as log
 from config.config import settings
 from LIM.data.structures import Pair, PCloud
+from LIM.log import log
 from LIM.models.layers import BatchNorm, Conv1DAdapter, KPConvNeighbors, ResBlock_A, ResBlock_B
 from LIM.models.layers.leakyrelu import LeakyReLU
 
@@ -19,6 +19,7 @@ class Encoder(torch.nn.Module):
         N_LAYERS = settings.MODEL.ENCODER.N_HIDDEN_LAYERS
         LATENT_DIM = settings.MODEL.LATENT_DIM
         self.neighbor_radius = [(2**i) * 0.0625 for i in range(2 + N_LAYERS)]
+        # self.neighbor_radius = [(2**i) * 0.06 for i in range(2 + N_LAYERS)]
         self.sample_dl = [(2**i) * 0.05 for i in range(1 + N_LAYERS)] + [None]
         self.enter = torch.nn.Sequential(
             KPConvNeighbors(in_dim=2 ** (0), out_dim=2 ** (6), radius=self.neighbor_radius[0]),

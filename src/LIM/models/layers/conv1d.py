@@ -2,6 +2,7 @@ import torch
 from LIM.data.structures import PCloud
 from LIM.models.layers import BatchNorm
 from config.config import settings
+from LIM.log import log
 
 
 class Bias(torch.nn.Module):
@@ -53,7 +54,10 @@ class Conv1D(torch.nn.Module):
         return out
 
     def forward(self, cloud: PCloud) -> PCloud:
-        cloud.features = self.layers(cloud.features)
+        try:
+            cloud.features = self.layers(cloud.features)
+        except RuntimeError as e:
+            log.error(f"Something went wrong in Conv1D: {e}\n{cloud=}")
         return cloud
 
 

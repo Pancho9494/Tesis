@@ -12,8 +12,8 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 
 import config.config as config
-import LIM.log as log
 from LIM.data.sets import CloudDatasetsI
+from LIM.log import log
 from LIM.metrics import Loss
 from LIM.models.modelI import Model
 from LIM.training.run_state import RunState
@@ -96,8 +96,9 @@ class BaseTrainer(ABC):
                     weight_decay=(_wd := self._settings.TRAINER.LEARNING_RATE.WEIGHT_DECAY),
                     momentum=(_mm := self._settings.TRAINER.LEARNING_RATE.MOMENTUM),
                 )
-                log.info(f"Chose SGD optimizer (lr={_lr}, weight_decay={_wd}, momentum={_mm}")
+                log.info(f"Chose SGD optimizer (lr={_lr}, weight_decay={_wd}, momentum={_mm})")
         self.state = RunState(run_name=f"{self.BACKUP_DIR.parent.stem}/{self.BACKUP_DIR.stem}")
+        log.run_hash = self.state.tracker.name.split(" ")[-1]
         self.__load_config(mode := mode if mode is not None else BaseTrainer.Mode.NEW)
         self.__load_dataloaders(dataset)
 

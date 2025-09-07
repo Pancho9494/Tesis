@@ -1,10 +1,12 @@
+from typing import Any, List, Tuple
+
 import torch
-from typing import List, Any, Tuple
-from LIM.data.structures import PCloud, Pair
+from multimethod import multimethod
+
+from config.config import settings
+from LIM.data.structures import Pair, PCloud
 from LIM.models.layers import Conv1D
 from LIM.models.layers.nearestupsample import NearestUpsample
-from config.config import settings
-from multimethod import multimethod
 
 
 class Decoder(torch.nn.Module):

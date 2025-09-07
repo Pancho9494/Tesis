@@ -3,11 +3,9 @@ import builtins
 import os
 import open3d as o3d
 from rich import pretty, print
-import LIM.log as log
 import config.config as config
-from LIM.data.structures.pcloud import Painter, PCloud, Downsampler
+from LIM.data.structures.pcloud import Painter, PCloud
 import numpy as np
-import torch
 
 pretty.install()
 builtins.print = print

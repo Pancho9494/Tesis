@@ -56,7 +56,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     config.settings = config.Settings.from_yaml(args.config_file)
-    from LIM.training import BaseTrainer
+    from LIM.training.trainer import BaseTrainer
 
     mode = BaseTrainer.Mode(config.settings.TRAINER.MODE.value)
 

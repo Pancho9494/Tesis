@@ -5,7 +5,7 @@ import polars as pl
 import scipy
 from aim import Repo
 
-import LIM.log as log
+from LIM.log import log
 
 TRAIN_TICKS_DISTANCE = 200
 VAL_TICKS_DISTANCE = 50

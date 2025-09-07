@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import functools
 from copy import deepcopy
 from functools import partial
-import functools
 from typing import Callable
 
 import numpy as np
@@ -15,6 +15,7 @@ from LIM.data.structures import Bunny
 from LIM.data.structures.pair import Pair
 from LIM.data.structures.pcloud import collate_cloud
 from LIM.data.structures.transforms import transform_factory
+from LIM.log import log
 
 
 class RegistrationBunny(CloudDatasetsI):
@@ -46,7 +47,6 @@ class RegistrationBunny(CloudDatasetsI):
     @only_kwargs(["overlap"])
     def with_overlap(self, *args, **kwargs) -> RegistrationBunny:
         self._transformations = [partial(Bunny.split, **kwargs)] + self._transformations
-        # self._transformations.append(partial(Bunny.split, **kwargs))
         return self
 
     def __repr__(self) -> str:
@@ -56,20 +56,47 @@ class RegistrationBunny(CloudDatasetsI):
         return self.n_samples
 
     def __getitem__(self, idx: int) -> Pair:
+        transforms = self._transformations
+
         source = deepcopy(self.mother_bunny)
-        target = source
-        for transform in self._transformations:
+        if "split" == transforms[0].func.__name__:
+            target = transforms[0](self=source, idx=idx)
+            transforms = transforms[1:]
+        else:
+            target = source
+
+        for transform in transforms:
             target = transform(self=target, idx=idx)
 
-        return Pair(source.cloud, target.cloud, GT_tf_matrix=target.T)
+        pair = Pair(source.cloud, target.cloud, GT_tf_matrix=target.T)
+        pair.correspondences
+        return pair
 
     @classmethod
     def new_instance(
-        cls, split: CloudDatasetsI.SPLITS, n_samples: int = 100, bunny_seed: int = 1234
+        cls, split: CloudDatasetsI.SPLITS, n_samples: int = 300, bunny_seed: int = 1234
     ) -> RegistrationBunny:
         instance = cls(n_samples, bunny_seed)
         instance.split = split
         return instance
+
+    @classmethod
+    def build(cls, config_fn: Callable[[RegistrationBunny], RegistrationBunny]) -> type[RegistrationBunny]:
+        template_instance = cls(n_samples=1)
+        configured_template = config_fn(template_instance)
+        transformations_to_apply = configured_template._transformations
+        log.info(f"{[v.func.__name__ for v in transformations_to_apply]=}")
+
+        class ConfiguredRegistrationBunny(cls):
+            @classmethod
+            def new_instance(
+                cls, split: CloudDatasetsI.SPLITS, n_samples: int = 300, bunny_seed: int = 1234
+            ) -> RegistrationBunny:
+                instance = super().new_instance(split, n_samples, bunny_seed)
+                instance._transformations = transformations_to_apply
+                return instance
+
+        return ConfiguredRegistrationBunny
 
     @property
     def collate_fn(self) -> Callable:
@@ -88,19 +115,24 @@ def collate_bunnies(batch: list[Pair], split: CloudDatasetsI.SPLITS) -> Pair:
     source_batch, target_batch = collate_cloud(sources), collate_cloud(targets)
     GT_tf_batch = np.concatenate([np.expand_dims(arr, axis=0) for arr in GT_TFs], axis=0)
 
-    tf = torchvision.transforms.Compose(
-        transform_factory(
-            getattr(settings.TRAINER.POINTCLOUD_TF, split.value.upper()),
-        )
-    )
-    source_batch, target_batch = tf(source_batch), tf(target_batch)
-    source_batch.points = source_batch.points.reshape(-1, 3)
-    source_batch.features = source_batch.features.reshape(-1, 1)
-    target_batch.points = target_batch.points.reshape(-1, 3)
-    target_batch.features = target_batch.features.reshape(-1, 1)
-    return Pair(
+    pair = Pair(
         id=batch[0].id,
         source=source_batch,
         target=target_batch,
         GT_tf_matrix=np.squeeze(GT_tf_batch, axis=0),
     )
+
+    if not hasattr(settings.TRAINER.POINTCLOUD_TF, split.value.upper()):
+        return pair
+
+    tf = torchvision.transforms.Compose(
+        transform_factory(
+            getattr(settings.TRAINER.POINTCLOUD_TF, split.value.upper()),
+        )
+    )
+    (pair.source, source_idxs), (pair.target, tgt_idxs) = tf(pair.source), tf(pair.target)
+    pair.source.points = pair.source.points.reshape(-1, 3)
+    pair.source.features = pair.source.features.reshape(-1, 1)
+    pair.target.points = pair.target.points.reshape(-1, 3)
+    pair.target.features = pair.target.features.reshape(-1, 1)
+    return pair

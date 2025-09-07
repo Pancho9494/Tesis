@@ -13,11 +13,11 @@ import numpy as np
 import torchvision
 from tqdm import tqdm
 
-import LIM.log as log
 from config.config import settings
 from LIM.data.sets.datasetI import CloudDatasetsI
 from LIM.data.structures import transform_factory
 from LIM.data.structures.pcloud import PCloud, collate_cloud
+from LIM.log import log
 
 executor = ThreadPoolExecutor()
 

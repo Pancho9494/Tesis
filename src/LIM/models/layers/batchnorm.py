@@ -1,7 +1,10 @@
-import torch
 from typing import Any
+
+import torch
 from multimethod import multimethod
+
 from LIM.data.structures import PCloud
+from LIM.log import log
 
 
 class BatchNorm(torch.nn.Module):
@@ -19,9 +22,12 @@ class BatchNorm(torch.nn.Module):
 
     @multimethod
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.unsqueeze(2).transpose(0, 2)
-        x = self._batch_norm(x)
-        x = x.transpose(0, 2).squeeze(2)
+        try:
+            x = x.unsqueeze(2).transpose(0, 2)
+            x = self._batch_norm(x)
+            x = x.transpose(0, 2).squeeze(2)
+        except Exception as e:
+            log.error(f"Something went wrong in BatchNorm: {e}\n{x.shape=}")
         return x
 
     @multimethod

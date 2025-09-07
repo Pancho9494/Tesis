@@ -1,5 +1,7 @@
-import copy
+from __future__ import annotations
+
 import os
+from copy import copy, deepcopy
 from typing import Any, Iterable, Optional, Tuple
 
 import numpy as np
@@ -72,6 +74,15 @@ class Pair:
     def __iter__(self) -> Iterable[Tuple[PCloud, PCloud]]:
         return iter((self.source, self.target))
 
+    def __copy__(self) -> Pair:
+        src_copy = copy(self.source)
+        tgt_copy = copy(self.target)
+        tf_copy = copy(self.GT_tf_matrix)
+        id_copy = copy(self.id)
+        pair = Pair(src_copy, tgt_copy, tf_copy, id_copy)
+        pair._correspondences = copy(self.correspondences)
+        return pair
+
     def overlap(self, threshold: float = 0.03) -> float:
         pcd_tree = o3d.geometry.KDTreeFlann(self.target.pcd.to_legacy())
         match_count = 0
@@ -130,11 +141,21 @@ class Pair:
 
         assert self.GT_tf_matrix is not None, "No ground truth transformation given, can't compute correspondences"
 
-        SEARCH_VOXEL_SIZE = 0.0375
-        temp_source = self.source.pcd.to_legacy()
+        if not isinstance(self.source.pcd, o3d.cuda.pybind.geometry.PointCloud):
+            legacy = self.source.pcd.to_legacy()
+            temp_source = o3d.geometry.PointCloud(legacy)
+        else:
+            temp_source = o3d.geometry.PointCloud(self.source.pcd)
+
+        SEARCH_VOXEL_SIZE = 0.0075 * np.linalg.norm(temp_source.get_max_bound() - temp_source.get_min_bound())
         temp_source.transform(self.GT_tf_matrix)
-        foo = self.target.pcd.to_legacy()
-        pcd_tree = o3d.geometry.KDTreeFlann(foo)
+
+        if not isinstance(self.target.pcd, o3d.cuda.pybind.geometry.PointCloud):
+            temp_target = self.target.pcd.to_legacy()
+        else:
+            temp_target = self.target.pcd
+
+        pcd_tree = o3d.geometry.KDTreeFlann(temp_target)
         correspondences = []
         for i, point in enumerate(temp_source.points):
             [count, indices, _] = pcd_tree.search_radius_vector_3d(point, SEARCH_VOXEL_SIZE)
@@ -245,37 +266,105 @@ class Pair:
 
         return batch
 
-    def show(self, predicted_tf: np.ndarray | None = None) -> None:
+    def _make_visualizer(
+        self,
+        name: str,
+        width: float,
+        height: float,
+        left: float,
+        top: float,
+        bg_color: np.ndarray | None = None,
+        point_size: int = 10,
+    ) -> tuple[Visualizer, ViewControl]:
+        vis = Visualizer()
+        vis.create_window(name, width, height, int(left), int(top))
+        if bg_color is not None:
+            vis.get_render_option().background_color = bg_color
+        vis.get_render_option().point_size = point_size
+        return vis, vis.get_view_control()
+
+    def _update_visualizer(self, vis: Visualizer, geometries: list[Geometry]) -> bool:
+        _: list[bool] = [vis.update_geometry(g) for g in geometries]
+        if not vis.poll_events():
+            return False
+        vis.update_renderer()
+        return True
+
+    def show(
+        self,
+        predicted_tf: np.ndarray | None = None,
+        correspondences: o3d.utility.Vector2iVector | None = None,
+        src_idxs: np.ndarray | None = None,
+        tgt_idxs: np.ndarray | None = None,
+        overlap_scores: np.ndarray | torch.Tensor | None = None,
+    ) -> None:
         WIDTH, HEIGHT = 1280, 720
         YELLOW = np.array([1.0, 0.706, 0.0])  # noqa: F841
+        GREEN = np.array([0, 1.0, 0])
         BLUE = np.array([0.0, 0.651, 0.929])
         BLACK = np.array([0, 0, 0])
 
-        vis2 = o3d.visualization.Visualizer()
-        vis2.create_window(window_name="ground truth", width=WIDTH, height=HEIGHT, left=WIDTH, top=HEIGHT)
-        vis2.add_geometry(gt_src_pcd)
-        vis2.add_geometry(tgt_pcd.pcd)
+        src_pcd = Painter.Uniform(BLUE, compute_normals=True)(
+            copy(self.source),
+            to_legacy=False if isinstance(self.source.pcd, o3d.cuda.pybind.geometry.PointCloud) else True,
+        )
+        tgt_pcd = Painter.Uniform(YELLOW, compute_normals=True)(
+            copy(self.target),
+            to_legacy=False if isinstance(self.target.pcd, o3d.cuda.pybind.geometry.PointCloud) else True,
+        )
 
-        gt_src_pcd = copy.deepcopy(src_pcd).pcd.transform(self.GT_tf_matrix)
+        if isinstance(overlap_scores, torch.Tensor):
+            overlap_scores = overlap_scores.detach().cpu().numpy()
+
+        gt_src_pcd = deepcopy(src_pcd.pcd).transform(self.GT_tf_matrix)
+        gt_src_pcd = deepcopy(src_pcd.pcd).transform(self.GT_tf_matrix)
         pred_src_pcd = None
         if predicted_tf is not None:
-            pred_src_pcd = copy.deepcopy(src_pcd.pcd)
+            pred_src_pcd = deepcopy(src_pcd.pcd)
             pred_src_pcd.transform(predicted_tf)
 
-        vis1, ctrl1 = self._make_visualizer("Raw", WIDTH, HEIGHT, 0, HEIGHT + 200, BLACK)
+        vis1, ctrl1 = self._make_visualizer("Raw", WIDTH, HEIGHT, 0, 0, BLACK)
         _: list[bool] = [vis1.add_geometry(g) for g in [src_pcd.pcd, tgt_pcd.pcd]]
-        vis2, ctrl2 = self._make_visualizer(f"[{src_pcd.path}] ground truth", WIDTH, HEIGHT, WIDTH, HEIGHT + 200, BLACK)
+        vis2, ctrl2 = self._make_visualizer(f"[{src_pcd.path}] ground truth", WIDTH, HEIGHT, 0, HEIGHT + 120, BLACK)
         _: list[bool] = [vis2.add_geometry(g) for g in [gt_src_pcd, tgt_pcd.pcd]]
 
         vis3 = None
         if pred_src_pcd is not None:
             vis3, ctrl3 = self._make_visualizer(
-                f"[{src_pcd.path}] predicted", WIDTH, HEIGHT, WIDTH / 2, HEIGHT - 600, BLACK
+                f"[{src_pcd.path}] predicted", WIDTH, HEIGHT, WIDTH, HEIGHT + 120, BLACK
             )
             _: list[bool] = [vis3.add_geometry(g) for g in [pred_src_pcd, tgt_pcd.pcd]]
 
-        ctrl2.set_zoom(0.8)
-        ctrl2.rotate(0, 200)
+        vis4 = None
+        if correspondences is not None and src_idxs is not None and tgt_idxs is not None and overlap_scores is not None:
+            src_overlap_pcd = Painter.Overlap(BLUE, overlap_scores[: src_pcd.shape[0]], compute_normals=True)(
+                copy(self.source),
+                to_legacy=False if isinstance(self.source.pcd, o3d.cuda.pybind.geometry.PointCloud) else True,
+            )
+            tgt_overlap_pcd = Painter.Overlap(YELLOW, overlap_scores[src_pcd.shape[0] :], compute_normals=True)(
+                copy(self.target),
+                to_legacy=False if isinstance(self.target.pcd, o3d.cuda.pybind.geometry.PointCloud) else True,
+            )
+            vis4, ctrl4 = self._make_visualizer(
+                f"[{src_pcd.path}] overlaps and correspondences", WIDTH, HEIGHT, WIDTH, 0, BLACK
+            )
+            line_set = o3d.geometry.LineSet()
+            points_raw = np.vstack((np.asarray(src_pcd.pcd.points), np.asarray(tgt_pcd.pcd.points)))
+            line_set.points = o3d.utility.Vector3dVector(points_raw)
+
+            line_indices_np = np.asarray(correspondences)
+            downsampled_src_idxs = line_indices_np[:, 0]
+            downsampled_tgt_idxs = line_indices_np[:, 1]
+
+            original_src_idxs = src_idxs[downsampled_src_idxs]
+            original_tgt_idxs = tgt_idxs[downsampled_tgt_idxs]
+
+            remapped_corres = np.vstack((original_src_idxs.cpu(), original_tgt_idxs.cpu())).T
+            remapped_corres[:, 1] += len(src_pcd.pcd.points)
+
+            line_set.lines = o3d.utility.Vector2iVector(remapped_corres)
+            line_set.paint_uniform_color(GREEN)
+            _: list[bool] = [vis4.add_geometry(g) for g in [src_overlap_pcd.pcd, tgt_overlap_pcd.pcd, line_set]]
 
         keep_rendering: bool = True
         while keep_rendering:
@@ -283,8 +372,12 @@ class Pair:
                 keep_rendering = self._update_visualizer(vis, geometries)
             if vis3 is not None:
                 keep_rendering = self._update_visualizer(vis3, [pred_src_pcd, tgt_pcd.pcd])
+            if vis4 is not None:
+                keep_rendering = self._update_visualizer(vis4, [src_overlap_pcd.pcd, tgt_overlap_pcd.pcd, line_set])
 
         for vis in [vis1, vis2]:
             vis.destroy_window()
         if vis3 is not None:
             vis3.destroy_window()
+        if vis4 is not None:
+            vis4.destroy_window()

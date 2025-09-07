@@ -16,6 +16,44 @@ class TrainerStateProtocol(Protocol):
     current: CurrentProtocol
 
 
+class RRE(Loss):
+    def __init__(self, trainer_state: TrainerStateProtocol) -> None:
+        super().__init__(trainer_state, also_track=["average"], extra_context={"registration_error": True})
+
+    def __repr__(self) -> str:
+        return "RRE()"
+
+    def __call__(self, sample: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        real_T, pred_T = sample
+        if isinstance(real_T, np.ndarray):
+            real_T = torch.from_numpy(real_T.copy())
+        if isinstance(pred_T, np.ndarray):
+            pred_T = torch.from_numpy(pred_T.copy())
+        real_R, pred_R = real_T[..., :3, :3], pred_T[..., :3, :3]
+        R_rel = pred_R.transpose(-1, -2) @ real_R
+        tr = R_rel.diagonal(offset=0, dim1=-2, dim2=1).sum(-1)
+        cos_theta = ((tr - 1.0) / 2.0).clamp(-1.0, 1.0)
+        return torch.acos(cos_theta)
+
+
+class RTE(Loss):
+    def __init__(self, trainer_state: TrainerStateProtocol) -> None:
+        super().__init__(trainer_state, also_track=["average"], extra_context={"registration_error": True})
+
+    def __repr__(self) -> str:
+        return "RTE()"
+
+    def __call__(self, sample: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        real_T, pred_T = sample
+        if isinstance(real_T, np.ndarray):
+            real_T = torch.from_numpy(real_T.copy())
+        if isinstance(pred_T, np.ndarray):
+            pred_T = torch.from_numpy(pred_T.copy())
+        real_t = real_T[..., :3, -1]
+        pred_t = pred_T[..., :3, -1]
+        return torch.linalg.norm(pred_t - real_t, dim=-1)
+
+
 class L1Loss(Loss):
     def __init__(self, trainer_state: TrainerStateProtocol, reduction: str) -> None:
         super().__init__(trainer_state, also_track=["average"])
@@ -32,7 +70,7 @@ class L1Loss(Loss):
 
 
 class IOU(Loss):
-    THRESHOLD: float
+    _THRESHOLD: float
 
     def __init__(self, trainer_state: TrainerStateProtocol, threshold: float) -> None:
         super().__init__(trainer_state, y0to1=True, also_track=["average"])

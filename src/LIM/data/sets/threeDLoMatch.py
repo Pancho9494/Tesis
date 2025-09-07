@@ -9,12 +9,12 @@ import numpy as np
 import polars as pl
 import torchvision
 
-import LIM.log as log
 from config.config import settings
 from LIM.data.sets.datasetI import CloudDatasetsI
 from LIM.data.structures.pair import Pair
 from LIM.data.structures.pcloud import Downsampler, PCloud, collate_cloud
 from LIM.data.structures.transforms import transform_factory
+from LIM.log import log
 
 
 class ThreeDLoMatch(CloudDatasetsI):

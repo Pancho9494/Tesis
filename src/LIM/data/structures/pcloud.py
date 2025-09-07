@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Self, Tuple, Union
 
 import matplotlib as mpl
 import numpy as np
 import open3d as o3d
 import torch
 
-import LIM.log as log
 from config.config import settings
+from LIM.log import log
 
 try:
     import frnn
@@ -83,21 +83,30 @@ class PCloud:
         out += ")"
         return out
 
-    def __copy__(self) -> "PCloud":
-        cls = self.__class__.from_tensor(self.points.clone())
-        cls.features = self.features.clone()
-        cls._sub = self._sub
-        cls._super = self._super
-        cls.path = self.path
+    def __copy__(self) -> PCloud:
+        # instance = PCloud()
+        # instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(self.o3ddevice))
+        # if isinstance(self.pcd, o3d.cuda.pybind.geometry.PointCloud):
+        #    instance.pcd.point.positions = o3d.core.Tensor(
+        #        np.asarray(self.pcd.points).copy(),
+        #        o3d.core.Dtype.Float32,
+        #        o3d.core.Device(self.o3ddevice),
+        #    )
+        instance = self.__class__.from_tensor(self.points.clone())
 
-        cls.neighbors = self.neighbors
-        cls.pools = self.pools
-        cls.upsamples = self.upsamples
-        return cls
+        instance.features = self.features.clone()
+        instance._sub = self._sub
+        instance._super = self._super
+        instance.path = self.path
+
+        instance.neighbors = self.neighbors
+        instance.pools = self.pools
+        instance.upsamples = self.upsamples
+        return instance
 
     # =========================================== FACTORY ===========================================#
     @classmethod
-    def from_path(cls, path: Union[Path, str]) -> "PCloud":
+    def from_path(cls, path: Union[Path, str]) -> PCloud:
         if isinstance(path, str):
             path = Path(path)
 
@@ -107,19 +116,19 @@ class PCloud:
             instance = cls.from_arr(torch.load(path, weights_only=False))
         else:
             instance = cls()
-            instance.pcd = o3d.io.read_point_cloud(str(path))
+            instance.pcd = o3d.t.io.read_point_cloud(str(path)).to(device=o3d.core.Device(cls.o3ddevice))
 
         instance.path = path
         return instance
 
     @classmethod
-    def from_pcd(cls, pcd: o3d.t.geometry.PointCloud) -> "PCloud":
+    def from_pcd(cls, pcd: o3d.t.geometry.PointCloud) -> PCloud:
         instance = cls()
         instance.pcd = pcd
         return instance
 
     @classmethod
-    def from_arr(cls, arr: np.ndarray) -> "PCloud":
+    def from_arr(cls, arr: np.ndarray) -> PCloud:
         assert arr.shape == Shape((Shape.ANY, 3)), "Array must be 3-dimensional"
         instance = cls()
         instance.pcd = o3d.t.geometry.PointCloud()
@@ -131,7 +140,7 @@ class PCloud:
         return instance
 
     @classmethod
-    def from_tensor(cls, tens: torch.Tensor) -> "PCloud":
+    def from_tensor(cls, tens: torch.Tensor) -> PCloud:
         instance = cls()
         instance.pcd = o3d.t.geometry.PointCloud().to(o3d.core.Device(cls.o3ddevice))
         instance.pcd.point.positions = o3d.core.Tensor(
@@ -154,28 +163,37 @@ class PCloud:
                 return ""
 
     @property
-    def first(self) -> "PCloud":
+    def first(self) -> PCloud:
         current = self
         while current._sub is not None:
             current = current._sub
         return current
 
     @property
-    def last(self) -> "PCloud":
+    def last(self) -> PCloud:
         current = self
         while current._super is not None:
             current = current._super
         return current
 
     @property
+    def chain(self) -> str:
+        msg = ""
+        current = self.first
+        while current._super is not None:
+            msg += f"{str(current)}\n"
+            current = current._super
+        return msg
+
+    @property
     def arr(self) -> np.ndarray:
-        if isinstance(self.pcd, o3d.cpu.pybind.geometry.PointCloud):
+        if isinstance(self.pcd, o3d.cuda.pybind.geometry.PointCloud):
             return np.asarray(self.pcd.points)
         return self.pcd.point.positions.cpu().contiguous().numpy().astype(np.float64)
 
     @property
     def points(self) -> torch.Tensor:
-        if isinstance(self.pcd, o3d.cpu.pybind.geometry.PointCloud):
+        if isinstance(self.pcd, o3d.cuda.pybind.geometry.PointCloud):
             return torch.from_numpy(self.arr)
         return torch.utils.dlpack.from_dlpack(self.pcd.point.positions.to_dlpack()).to(self.device)
 
@@ -198,7 +216,7 @@ class PCloud:
     @property
     def o3d_features(self) -> o3d.pipelines.registration.Feature:
         features = o3d.pipelines.registration.Feature()
-        features.data = self.features.cpu().numpy().T
+        features.data = self.features.detach().cpu().numpy().T
         return features
 
     @points.setter
@@ -218,7 +236,7 @@ class PCloud:
         self.pcd = self.pcd.transform(tf_matrix)
         return self
 
-    def show(self) -> None:
+    def show(self, paint: bool = True, compute_normals: bool = True) -> None:
         WIDTH, HEIGHT = 3840, 2160
         ROTATE_X, ROTATE_Y = 0.0, 0.0
         BLACK = np.array([0, 0, 0])
@@ -228,7 +246,7 @@ class PCloud:
 
         if paint:
             pcd = Painter.Uniform(YELLOW, compute_normals)(
-                self, to_legacy=False if isinstance(self.pcd, o3d.cpu.pybind.geometry.PointCloud) else True
+                self, to_legacy=False if not isinstance(self.pcd, o3d.cuda.pybind.geometry.PointCloud) else True
             ).pcd
         else:
             pcd = self.pcd
@@ -236,7 +254,6 @@ class PCloud:
         vis.create_window(window_name=str(self.path), width=WIDTH, height=HEIGHT, left=0, top=HEIGHT)
         vis.get_render_option().background_color = WHITE
 
-        log.info(f"{pcd=}, {vis=}")
         vis.add_geometry(pcd)
         ctr = vis.get_view_control()
         ctr.set_zoom(1.2)
@@ -251,14 +268,14 @@ class PCloud:
 
     def unsqueeze(self) -> None:
         self.points = self.points.reshape((1, -1, 3))
-        self.features = self.features.reshape((1, -1, 1))
+        self.features = self.features.reshape((1, -1, self.features.shape[-1]))
 
     def squeeze(self) -> None:
         self.points = self.points.reshape((-1, 3))
-        self.features = self.features.reshape((-1, 1))
+        self.features = self.features.reshape((-1, self.features.shape[-1]))
 
-    def detach_from_chain(self) -> "PCloud":
-        """p
+    def detach_from_chain(self) -> PCloud:
+        """
         Frees the gradients from all pointss within the [_sub ... self ... _super] chain
         """
         current = self._super
@@ -327,11 +344,12 @@ class PCloud:
         #     current._super._sub = self
         #     current._super.features = current.features.detach().clone().to(current.device)
 
-    def compute_neighbors(self, radius: float, sampleDL: Optional[float]) -> None:
+    def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> None:
         current = self.last
 
         points = current.points.cpu().detach().numpy()
         length = torch.tensor([len(points)])
+        # log.info(f"{points.shape=} {points.dtype=}")
         current.neighbors = cpp_neighbors.batch_query(  # conv_i
             queries=points,
             supports=points,
@@ -379,7 +397,7 @@ class PCloud:
             current._super.path = current.path
 
         current._super._sub = self
-        current._sunper.features = current.features.detach().clone().to(current.device)
+        current._super.features = current.features.detach().clone().to(current.device)
 
 
 def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> None:
@@ -446,7 +464,7 @@ def compute_neighbors(self, radius: float, sampleDL: float | None = None) -> Non
     current._super.features = current.features.detach().clone().to(current.device)
 
 
-def collate_cloud(batch: List["PCloud"]) -> "PCloud":
+def collate_cloud(batch: List[PCloud]) -> PCloud:
     """
     Stacks multiple clouds [N, 3] from a batch into a batch of shape [batch_size, N, 3]
     """
@@ -455,7 +473,7 @@ def collate_cloud(batch: List["PCloud"]) -> "PCloud":
 
     cloud.path = [b.path for b in batch]
     try:  # Possibly empty tensors
-        if isinstance(cloud.pcd, o3d.cpu.pybind.geometry.PointCloud):
+        if not isinstance(cloud.pcd, o3d.cuda.pybind.geometry.PointCloud):
             cloud.pcd.colors = o3d.utility.Vector3dVector(
                 np.concatenate(
                     [np.asarray(b.pcd.colors) for b in batch],
@@ -488,6 +506,7 @@ class Downsampler:
         RANDOM = "_random_indices"
         PROBABILISTIC = "_probabilistic"
         INDICES = "_indices"
+        VOXEL = "_voxel"
 
     mode: Mode
     size: int
@@ -503,7 +522,7 @@ class Downsampler:
                 if NUM_POINTS < self.size:
                     # return temp_cloud, torch.arange(NUM_POINTS, device=cloud.device).expand(BATCH_SIZE, -1)
                     return temp_cloud
-                temp_cloud = self._downsample_batch(temp_cloud, *args, **kwargs)
+                temp_cloud, indices = self._downsample_batch(temp_cloud, *args, **kwargs)
 
             case (NUM_POINTS, _N_DIM):
                 if NUM_POINTS < self.size:
@@ -515,14 +534,15 @@ class Downsampler:
                 temp_cloud.squeeze()
             case _:
                 raise ValueError(f"Expected input tensor to have 2 or 3 dimensions, but got {temp_cloud.points.shape}")
-        # return temp_cloud, indices.squeeze(0)
-        return temp_cloud
+        return temp_cloud, indices.squeeze(0)
+        # return temp_cloud
 
     def _downsample_batch(self, cloud: PCloud, *args, **kwargs) -> tuple[PCloud, torch.Tensor]:
         BATCH_SIZE, NUM_POINTS, N_DIM = cloud.points.shape
-        indices: torch.Tensor = getattr(self, self.mode)(self.size, cloud, *args, **kwargs)
+        C_FEATURES = cloud.features.shape[-1]
+        indices, cloud = getattr(self, self.mode)(self.size, cloud, *args, **kwargs)
         cloud.points = torch.gather(cloud.points, dim=1, index=indices.unsqueeze(-1).expand(-1, -1, N_DIM))
-        cloud.features = torch.gather(cloud.features, dim=1, index=indices.unsqueeze(-1).expand(-1, -1, 1))
+        cloud.features = torch.gather(cloud.features, dim=1, index=indices.unsqueeze(-1).expand(-1, -1, C_FEATURES))
 
         try:  # These might be empty but we don't really care
 
@@ -534,11 +554,13 @@ class Downsampler:
         except (KeyError, IndexError):
             pass
 
-        # return cloud, indices
-        return cloud
+        return cloud, indices
+        # return (cloud, ...)
 
     def _random_indices(self, size: int, cloud: PCloud) -> torch.Tensor:
-        return torch.randint(low=0, high=size, size=(cloud.points.shape[0], size), device=cloud.device)
+        BATCH_SIZE, NUM_POINTS, N_DIM = cloud.points.shape
+        indices = torch.cat([torch.randperm(NUM_POINTS, device=cloud.device).unsqueeze(0) for _ in range(BATCH_SIZE)])
+        return indices[:, :size], cloud
 
     def _probabilistic(self, size: int, cloud: PCloud, scores: torch.Tensor) -> torch.Tensor:
         n = scores.size(0)
@@ -546,13 +568,39 @@ class Downsampler:
             choice = np.random.choice(n, size)
         else:
             idx = np.arange(n)
-            probabilities = (scores / scores.sum()).cpu().numpy().flatten()
+            probabilities = (scores / scores.sum()).detach().cpu().numpy().flatten()
             choice = np.random.choice(idx, size=size, replace=False, p=probabilities)
 
-        return torch.from_numpy(choice).unsqueeze(0).to(cloud.device)
+        return torch.from_numpy(choice).unsqueeze(0).to(cloud.device), cloud
 
     def _indices(self, size: int, cloud: PCloud, indices: torch.Tensor) -> torch.Tensor:
-        return indices.unsqueeze(0).to(torch.int64)
+        return indices.unsqueeze(0).to(torch.int64), cloud
+
+    def _voxel(self, size: int, cloud: PCloud, voxel_size: float, *args, **kwargs) -> tuple[torch.Tensor, PCloud]:
+        if not isinstance(size, (int, float)) or size <= 0:
+            raise ValueError("Voxel mode requires a positive number for voxel_size.")
+
+        log.info(f"{cloud=}")
+        pcd = cloud.pcd
+        if cloud.features is not None and cloud.features.numel() > 0:
+            pcd.point["features"] = o3d.core.Tensor.from_dlpack(
+                torch.to_dlpack(cloud.features.squeeze(0).to(torch.float32))
+            )
+        pcd.point.positions = o3d.core.Tensor.from_dlpack(torch.to_dlpack(cloud.points.squeeze(0).to(torch.float32)))
+
+        downsampled_pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+        new_points = torch.from_dlpack(downsampled_pcd.point.positions.to_dlpack()).unsqueeze(0)
+        new_features = (
+            torch.from_dlpack(downsampled_pcd.point.features.to_dlpack()).unsqueeze(0)
+            if "features" in downsampled_pcd.point
+            else torch.empty((1, new_points.shape[1], 0), device=cloud.device)
+        )
+        cloud.pcd = downsampled_pcd
+        cloud.points = new_points.to(device=cloud.device)
+        cloud.features = new_features.to(device=cloud.device)
+        log.info(f"{cloud=}")
+        indices = torch.arange(new_points.shape[1], device=cloud.device).unsqueeze(0)
+        return indices, cloud
 
 
 class Painter:
@@ -624,6 +672,26 @@ class Painter:
             if to_legacy:
                 cloud.pcd = cloud.pcd.to_legacy()
             cloud.pcd.paint_uniform_color(self.value)
+            if self.compute_normals:
+                cloud.pcd.estimate_normals()
+            return cloud
+
+    class Overlap:
+        WHITE: np.ndarray
+        scores: np.ndarray
+        colors: np.ndarray
+        compute_normals: bool
+
+        def __init__(self, base_color: np.ndarray, overlap_scores: np.ndarray, compute_normals: bool = True) -> None:
+            self.WHITE = np.array([1.0, 1.0, 1.0])
+            self.scores = overlap_scores[:, None]
+            self.colors = base_color + (self.WHITE - base_color) * (1 - self.scores)
+            self.compute_normals = compute_normals
+
+        def __call__(self, cloud: PCloud, to_legacy: bool = True) -> None:
+            if to_legacy:
+                cloud.pcd = cloud.pcd.to_legacy()
+            cloud.pcd.colors = o3d.utility.Vector3dVector(self.colors)
             if self.compute_normals:
                 cloud.pcd.estimate_normals()
             return cloud

@@ -1,14 +1,15 @@
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Protocol
-import copy
+
 import aim
 import msgpack
 import torch
 
-import LIM.log as log
 from config.config import settings
+from LIM.log import log
 
 
 class TrainerStateProtocol(Protocol):
@@ -75,7 +76,7 @@ class Metric(ABC):
         return loss
 
     def __repr__(self) -> str:
-        return f"{self.name}[current=[cyan]{self.current:5.4f}[/cyan], average=[cyan]{self.average:5.4f}[/cyan]]"
+        return f"{self.name}[c=[cyan]{self.current:5.2f}[/cyan], a=[cyan]{self.average:5.2f}[/cyan]]"
 
     def get(self, value: str) -> float:
         assert (value := value.lower().strip()) in ["best", "current", "total_sum", "average"]
@@ -100,7 +101,15 @@ class Loss(ABC):
     val: Metric
     device: torch.device
 
-    def __init__(self, trainer_state: TrainerStateProtocol, also_track: List[str] = [], y0to1: bool = False) -> None:
+    def __init__(
+        self,
+        trainer_state: TrainerStateProtocol,
+        also_track: List[str] | None = None,
+        y0to1: bool = False,
+        extra_context: dict[str, Any] | None = None,
+    ) -> None:
+        also_track = also_track if also_track is not None else []
+        extra_context = extra_context if extra_context is not None else {}
         self.device = torch.device(settings.DEVICE)
         self.train = Metric(
             name=self.__class__.__name__,
@@ -108,7 +117,8 @@ class Loss(ABC):
             context={
                 "subset": "train",
                 "y0to1": y0to1,
-            },
+            }
+            | extra_context,
             trainer_state=trainer_state,
             custom_function=self.__call__,
             also_track=also_track,
@@ -119,7 +129,8 @@ class Loss(ABC):
             context={
                 "subset": "val",
                 "y0to1": y0to1,
-            },
+            }
+            | extra_context,
             trainer_state=trainer_state,
             custom_function=self.__call__,
             also_track=also_track,
