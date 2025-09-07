@@ -77,7 +77,7 @@ class Bunny:
     def _new_bunny(self, applied_T: np.ndarray) -> Bunny:
         out_bunny = Bunny(seed=self._seed)
         out_bunny.T = deepcopy(self.T)
-        if not isinstance(self.cloud.pcd, o3d.cuda.pybind.geometry.PointCloud):
+        if not isinstance(self.cloud.pcd, o3d.pybind.geometry.PointCloud):  # pyright: ignore[reportAttributeAccessIssue]
             pcd_copy = deepcopy(self.cloud.pcd.clone())
         else:
             pcd_copy = o3d.geometry.PointCloud(deepcopy(self.cloud.pcd))
@@ -85,6 +85,79 @@ class Bunny:
         out_bunny.cloud.pcd = pcd_copy
         out_bunny.T = applied_T @ out_bunny.T
         return out_bunny
+
+    def split(self, overlap: float | int | None = None, axis: int | str | None = None, idx: int | None = None) -> Bunny:
+        if overlap is None:
+            if hasattr(self, "_rng"):
+                rng = self._rng(idx, tag="split")
+                overlap = float(rng.random())
+            else:
+                overlap = float(np.random.random())
+        else:
+            match overlap:
+                case float():
+                    assert 0.0 <= overlap <= 1.0, "overlap float must be in [0,1]"
+                case int():
+                    assert 0 <= overlap <= 100, "overlap int must be in [0,100]"
+                    overlap = overlap / 100.0
+                case _:
+                    raise TypeError("overlap must be float, int, or None")
+
+        if axis is None:
+            rng = self._rng(idx, tag="split_axis") if hasattr(self, "_rng") else np.random.default_rng()
+            ax = rng.integers(0, 3, dtype=int)
+        elif isinstance(axis, str):
+            ax = {"x": 0, "y": 1, "z": 2}[axis]
+        else:
+            ax = int(axis)
+
+        points = np.asarray(self.cloud.points.cpu())
+        axis_points = points[:, ax]
+
+        q_low = np.quantile(axis_points, 0.5 - overlap / 2.0)
+        q_high = np.quantile(axis_points, 0.5 + overlap / 2.0)
+
+        low = axis_points <= q_low
+        band = (axis_points > q_low) & (axis_points <= q_high)
+        high = axis_points > q_high
+
+        mask_S = band | low
+        mask_T = band | high
+
+        out_bunny = self._new_bunny(np.eye(4, 4))
+        out_bunny.cloud.pcd = o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(
+                points[mask_T].copy(),
+            )
+        )
+        self.cloud = PCloud()
+        self.cloud.pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(deepcopy(points)[mask_S]))
+        return out_bunny
+
+    def implicit(self) -> Bunny:
+        out_bunny = self._new_bunny(np.eye(4, 4))
+        out_bunny.cloud.pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(self._to_unit_cube(out_bunny.cloud)))
+        return out_bunny
+
+    def _to_unit_cube(self, cloud: PCloud, z_level: float = 0.5) -> np.ndarray:
+        points = np.asarray(self.cloud.points.cpu())
+        bbox_min, bbox_max = points.min(axis=0), points.max(axis=0)
+        bbox_center = (bbox_min + bbox_max) / 2.0
+        scale = 1.0 / (bbox_max - bbox_min).max()
+
+        T_center_to_origin = np.eye(4)
+        T_center_to_origin[:-1, -1] = -bbox_center
+        T_uniform_scale = np.eye(4) * scale
+        T_uniform_scale[-1, -1] = 1.0
+
+        hom = np.c_[points, np.ones((points.shape[0], 1))]
+        points_cs = (T_uniform_scale @ (T_center_to_origin @ hom.T)).T[:, :3]
+        z_min = points_cs[:, 2].min()
+        T_set_bottom_z = np.eye(4)
+        T_set_bottom_z[2, -1] = -z_min + z_level
+
+        T_unit_cube = T_set_bottom_z @ T_uniform_scale @ T_center_to_origin
+        return (T_unit_cube @ hom.T).T[:, :3]
 
     def rotate(
         self,
@@ -151,59 +224,11 @@ class Bunny:
             maxb = _cast_to_np3(self.cloud.pcd.get_max_bound())
             extent = maxb - minb
             t = (self._rng(idx, tag="translate").random(3) * 2.0 - 1.0) * (frac_of_bbox * extent)
-        t = np.asarray(t, dtype=np.float64).reshape(3)
 
+        t = np.asarray(t, dtype=np.float64).reshape(3)
         applied_T = np.eye(4, dtype=np.float64)
         applied_T[:3, 3] = t
         return self._new_bunny(applied_T)
-
-    def split(self, overlap: float | int | None = None, axis: int | str | None = None, idx: int | None = None) -> Bunny:
-        if overlap is None:
-            if hasattr(self, "_rng"):
-                rng = self._rng(idx, tag="split")
-                overlap = float(rng.random())
-            else:
-                overlap = float(np.random.random())
-        else:
-            match overlap:
-                case float():
-                    assert 0.0 <= overlap <= 1.0, "overlap float must be in [0,1]"
-                case int():
-                    assert 0 <= overlap <= 100, "overlap int must be in [0,100]"
-                    overlap = overlap / 100.0
-                case _:
-                    raise TypeError("overlap must be float, int, or None")
-
-        if axis is None:
-            rng = self._rng(idx, tag="split_axis") if hasattr(self, "_rng") else np.random.default_rng()
-            ax = rng.integers(0, 3, dtype=int)
-        elif isinstance(axis, str):
-            ax = {"x": 0, "y": 1, "z": 2}[axis]
-        else:
-            ax = int(axis)
-
-        points = np.asarray(self.cloud.points.cpu())
-        axis_points = points[:, ax]
-
-        q_low = np.quantile(axis_points, 0.5 - overlap / 2.0)
-        q_high = np.quantile(axis_points, 0.5 + overlap / 2.0)
-
-        low = axis_points <= q_low
-        band = (axis_points > q_low) & (axis_points <= q_high)
-        high = axis_points > q_high
-
-        mask_S = band | low
-        mask_T = band | high
-
-        out_bunny = self._new_bunny(np.eye(4, 4))
-        out_bunny.cloud.pcd = o3d.geometry.PointCloud(
-            o3d.utility.Vector3dVector(
-                points[mask_T].copy(),
-            )
-        )
-        self.cloud = PCloud()
-        self.cloud.pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(deepcopy(points)[mask_S]))
-        return out_bunny
 
     def noise(
         self,
@@ -225,7 +250,6 @@ class Bunny:
         if sigma.size == 1:
             sigma = np.full(3, sigma.item())
 
-        # Broadcast per-axis (1,3) over (N,3)
         mu = mu.reshape(1, 3)
         sigma = sigma.reshape(1, 3)
 
